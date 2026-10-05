@@ -20,3 +20,12 @@ local.properties
 *.hprof
 
 /sdk-repo/
+
+# scratch of the Java to Kotlin conversion (logs, error lists, a source backup)
+/.kotlin-fix/
+
+# build leftovers
+*.log
+*.tmp
+*.apk
+*.aab
