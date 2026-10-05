@@ -82,7 +82,7 @@ class OfficeDocumentView @JvmOverloads constructor(
     val control: MainControl?
         get() = reader?.control
 
-    /** Main-thread failure callback; return true to replace the library's error dialog. */
+    /** Main-thread failure callback, see [OfficeReader.onOpenFailure]; return true to replace the library's error dialog. */
     var onOpenFailure: ((OpenFileException) -> Boolean)? = null
         set(value) {
             field = value

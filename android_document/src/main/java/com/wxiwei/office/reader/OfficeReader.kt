@@ -66,7 +66,10 @@ class OfficeReader(
     private val _state = MutableStateFlow(ReaderState())
     val state: StateFlow<ReaderState> = _state.asStateFlow()
 
-    /** Main thread. Return true when the host shows the error itself, false for the library dialog. */
+    /**
+     * Main thread. The document could not be opened, or failed after it opened (it may come after
+     * the state was Ready). Return true when the host shows the error itself, false for the library dialog.
+     */
     var onOpenFailure: ((OpenFileException) -> Boolean)? = null
 
     /**

@@ -21,6 +21,7 @@ import com.editor.docsdk.FindResult
 import com.editor.docsdk.LineSpacingFormat
 import com.editor.docsdk.ParagraphFormat
 import com.wxiwei.office.R
+import com.wxiwei.office.constant.wp.WPModelConstant
 import kotlinx.coroutines.launch
 import com.wxiwei.office.editor.docx.LiveDocxSession
 import com.wxiwei.office.editor.word.WordSelection
@@ -66,7 +67,9 @@ class WordEditPanel @JvmOverloads constructor(
         })
         setOnKeyListener { _, keyCode, event ->
             // Backspace with nothing typed before the caret deletes the document text before it
+            // (not at the start of the body, a header, a footer or a text box: nothing is before it)
             if (keyCode == KeyEvent.KEYCODE_DEL && event.action == KeyEvent.ACTION_DOWN && base > 0 &&
+                (base and (WPModelConstant.AREA_MASK or WPModelConstant.TEXTBOX_MASK).inv()) > 0 &&
                 selectionStart == 0 && selectionEnd == 0) {
                 val s = session() ?: return@setOnKeyListener true
                 if (s.deleteText(base - 1, base)) { base -= 1; caret.touch(); pagesChangedFrom(base) }

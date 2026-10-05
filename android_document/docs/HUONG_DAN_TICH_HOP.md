@@ -704,6 +704,10 @@ Mọi lỗi của SDK đều là `DocumentException`, kèm `reason` cho biết n
 
 `error.cause` giữ lỗi gốc, dùng khi ghi log hoặc gửi báo cáo lỗi.
 
+**Lỗi sau khi tài liệu đã mở.** Tài liệu dài được đọc tiếp ở luồng nền sau khi trang đầu đã hiện (ví dụ các slide sau của một file PowerPoint). Nếu phần đọc tiếp, dàn trang hoặc vẽ bị lỗi, `DocumentView` gọi `Listener.onError` **sau** `onLoaded`, một lần cho mỗi lần mở, thay cho hộp thoại lỗi của SDK. App tự báo cho người dùng và đóng màn hình nếu muốn.
+
+**Hộp thoại lỗi mặc định.** Khi app dùng thẳng `OfficeReader` / `OfficeDocumentView` mà không gắn `onOpenFailure` (hoặc trả `false`), SDK hiện hộp thoại lỗi của nó rồi đóng `Activity` khi bấm OK. Hộp thoại này theo `DialogStyle` như các hộp thoại khác và dùng các chuỗi `docsdk_error_*`, `docsdk_password_*` (mục 8), nên đổi màu và đổi chữ được mà không cần tự dựng hộp thoại.
+
 ---
 
 ## 7. Định dạng hỗ trợ: `DocumentType`
@@ -866,7 +870,7 @@ Xem mục 4.3 và 4.4.
 |---|---|
 | `onLoaded(pageCount)` | Tài liệu đã hiển thị. |
 | `onPageChanged(page, pageCount)` | Trang hiển thị đổi (đếm từ 0), hoặc số trang tăng. |
-| `onError(error: DocumentException)` | Không mở được tài liệu, hoặc không ghi được thay đổi (`STORAGE`). |
+| `onError(error: DocumentException)` | Không mở được tài liệu, tài liệu lỗi sau khi đã mở (xem mục 6), hoặc không ghi được thay đổi (`STORAGE`). |
 | `onEditingChanged(editing)` | Thanh sửa hiện hoặc ẩn. |
 | `onSaved(file)` | Đã ghi thay đổi. |
 

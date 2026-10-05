@@ -67,7 +67,10 @@ class DocumentView @JvmOverloads constructor(
         /** The page on screen changed to [page] (0 based), or the count grew while a long document is laid out. */
         fun onPageChanged(page: Int, pageCount: Int) {}
 
-        /** The document could not be opened; when [DocumentException.reason] asks for a password, call [open] again with one. */
+        /**
+         * The document could not be opened, or stopped being read or drawn after [onLoaded]; when
+         * [DocumentException.reason] asks for a password, call [open] again with one.
+         */
         fun onError(error: DocumentException) {}
 
         /** The edit bar was shown ([editing] true) or hidden. */

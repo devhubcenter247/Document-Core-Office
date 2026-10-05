@@ -545,7 +545,8 @@ class PPTXReader(control: IControl?, filePath: String?) : AbstractReader() {
     @Throws(Exception::class)
     override fun backReader() {
         try {
-            processSlide(sldIds!!.get(currentReaderIndex++))
+            // the slide counts as read only once it is: the reading thread disposes a finished reader
+            try { processSlide(sldIds!!.get(currentReaderIndex)) } finally { currentReaderIndex++ }
             //control.actionEvent(EventConstant.PG_REPAINT_ID, null);
             control!!.actionEvent(EventConstant.APP_COUNT_PAGES_CHANGE_ID, null)
         } catch (e: Error) {

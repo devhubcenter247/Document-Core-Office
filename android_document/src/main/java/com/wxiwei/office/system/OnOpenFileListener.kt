@@ -38,6 +38,9 @@ enum class OfficeFileType(val extension: String, val category: OfficeCategory) {
 interface OnOpenFileListener {
     /** Called on the main thread once the document view is created. */
     fun onOpenFileSuccess(fileType: OfficeFileType)
-    /** Return true to suppress the library error dialog. Called on the main thread. */
+    /**
+     * The document could not be opened, or failed after it opened (reading the rest of it in the
+     * background, layout, drawing). Return true to suppress the library error dialog. Main thread.
+     */
     fun onOpenFileFailure(error: OpenFileException): Boolean
 }
