@@ -71,6 +71,17 @@ class WordObjectDragTest {
     private fun inject(action: Int, x: Float, y: Float, downTime: Long) {
         val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
         event.source = InputDevice.SOURCE_TOUCHSCREEN
+        // a finger left down by a test that failed half way makes the system refuse every touch after it
+        assertTrue("touch injected", instrumentation.uiAutomation.injectInputEvent(event, true))
+        event.recycle()
+    }
+
+    /** A test that failed with the finger down: lift it, or the system refuses the touches of every test after. */
+    @org.junit.After
+    fun liftFinger() {
+        val t = SystemClock.uptimeMillis()
+        val event = MotionEvent.obtain(t, t, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+        event.source = InputDevice.SOURCE_TOUCHSCREEN
         instrumentation.uiAutomation.injectInputEvent(event, true)
         event.recycle()
     }
@@ -319,12 +330,12 @@ class WordObjectDragTest {
             inject(MotionEvent.ACTION_DOWN, x, y, t)
             Thread.sleep(900)
             assertTrue("table frame shown", tableFrameShown(scenario))
-            // then up by 250 px, with a pause half way for a look at the drop line
+            // then up by 150 px (not into the top edge, where the document would scroll), with a pause half way for a look at the drop line
             for (i in 1..20) {
-                Thread.sleep(16); inject(MotionEvent.ACTION_MOVE, x, y - 250f * i / 20, t)
+                Thread.sleep(16); inject(MotionEvent.ACTION_MOVE, x, y - 150f * i / 20, t)
                 if (i == 20) screenshot("table_dragging")
             }
-            inject(MotionEvent.ACTION_UP, x, y - 250f, t)
+            inject(MotionEvent.ACTION_UP, x, y - 150f, t)
             Thread.sleep(2500)
             screenshot("table_after")
             scenario.onActivity { assertTrue("shown in place, not by reopening the document", word(viewer) === view) }
@@ -339,6 +350,88 @@ class WordObjectDragTest {
         val was = textBefore(original, tables(original)[1]); val now = textBefore(saved, tables(saved)[1])
         android.util.Log.i("DragTest", "before the table: '$was' -> '$now'")
         assertTrue("table moved: '$was' -> '$now'", was != now)
+    }
+
+    /** A table held at the bottom edge while dragged: the document scrolls under it, and it lands pages further down. */
+    @Test
+    fun tableDragToAnotherPage() {
+        val file = sample("sample.docx")
+        open(file) { scenario, viewer ->
+            fun table(): LongRange {
+                var out = 0L..0L
+                scenario.onActivity {
+                    val t = (word(viewer).getDocument() as WPDocument).getTableCollection(0)!!.getElementForIndex(1)!!
+                    out = t.getStartOffset() until t.getEndOffset()
+                }
+                return out
+            }
+            val from = table()
+            val box = reveal(scenario, viewer) { it.tableRect(from.first, from.last + 1) }
+            val scroll = scrollY(scenario, viewer)
+            var view: Any? = null
+            var text = ""
+            var bottom = 0f; var height = 0
+            scenario.onActivity {
+                val w = word(viewer); view = w
+                text = w.getDocument().getText(from.first, from.last + 1)
+                val o = IntArray(2); w.getLocationOnScreen(o)
+                bottom = (o[1] + w.height).toFloat(); height = w.height
+            }
+            val x = box.left + box.width() * 0.3f; val y = box.top + 25f
+            val t = SystemClock.uptimeMillis()
+            inject(MotionEvent.ACTION_DOWN, x, y, t)
+            Thread.sleep(900)
+            // down to the bottom edge, held there while the document scrolls
+            val edge = bottom - 20f
+            for (i in 1..20) { Thread.sleep(16); inject(MotionEvent.ACTION_MOVE, x, y + (edge - y) * i / 20, t) }
+            val end = System.currentTimeMillis() + 15_000
+            while (scrollY(scenario, viewer) - scroll < height && System.currentTimeMillis() < end) {
+                Thread.sleep(50); inject(MotionEvent.ACTION_MOVE, x, edge, t)
+            }
+            val scrolled = scrollY(scenario, viewer) - scroll
+            assertTrue("the document scrolled under the held table: $scrolled of $height", scrolled >= height)
+            // back up into the page (the document stops scrolling), onto a paragraph that has one after it, and dropped
+            val middle = edge - height * 0.5f
+            for (i in 1..10) { Thread.sleep(16); inject(MotionEvent.ACTION_MOVE, x, edge + (middle - edge) * i / 10, t) }
+            Thread.sleep(400)
+            var dropY = 0f
+            scenario.onActivity {
+                val w = word(viewer); val doc = w.getDocument() as WPDocument
+                val sel = WordSelection(w)
+                dropY = generateSequence(middle) { it - 40f }.takeWhile { it > edge - height * 0.85f }.first { sy ->
+                    val block = sel.offsetAtScreen(x, sy).takeIf { it >= 0 }?.let { doc.getParagraph0(it) }
+                    block is com.wxiwei.office.simpletext.model.ParagraphElement && block.getEndOffset() < doc.getAreaEnd(0) && block.getStartOffset() > from.last
+                }
+            }
+            for (i in 1..10) { Thread.sleep(16); inject(MotionEvent.ACTION_MOVE, x, middle + (dropY - middle) * i / 10, t) }
+            screenshot("table_other_page_dragging")
+            scenario.onActivity {
+                val w = word(viewer); val doc = w.getDocument() as WPDocument
+                val o = WordSelection(w).offsetAtScreen(x, dropY)
+                val block = doc.getParagraph0(o)
+                val now = doc.getTableCollection(0)!!.getElementForIndex(1)!!
+                val next = block?.let { doc.getParagraph0(it.getEndOffset()) }
+                android.util.Log.i("DragTest", "drop at offset $o of ${doc.getAreaEnd(0)}: ${block?.javaClass?.simpleName} ${block?.getStartOffset()}..${block?.getEndOffset()}, next ${next?.javaClass?.simpleName} ${next?.getStartOffset()}..${next?.getEndOffset()}, table $from now ${now.getStartOffset()}..${now.getEndOffset()}")
+            }
+            inject(MotionEvent.ACTION_UP, x, dropY, t)
+            Thread.sleep(2500)
+            android.util.Log.i("DragTest", "after drop: label='${label(scenario)}'")
+            screenshot("table_other_page_after")
+            scenario.onActivity { assertTrue("shown in place, not by reopening the document", word(viewer) === view) }
+            // the same table, found again by its text (it is no longer the second one)
+            var to = 0L..0L
+            scenario.onActivity {
+                val doc = word(viewer).getDocument() as WPDocument
+                val c = doc.getTableCollection(0)!!
+                to = (0 until c.size()).map { c.getElementForIndex(it)!! }.first { doc.getText(it.getStartOffset(), it.getEndOffset()) == text }
+                    .let { it.getStartOffset() until it.getEndOffset() }
+            }
+            var rect: Rect? = null
+            scenario.onActivity { rect = WordSelection(word(viewer)).tableRect(to.first, to.last + 1) }
+            android.util.Log.i("DragTest", "table to another page: $from -> $to, now at $rect, label='${label(scenario)}'")
+            assertTrue("the table went down the document: $from -> $to", to.first > from.first)
+            assertTrue("it is where it was dropped, on the screen: $rect", rect != null && rect!!.bottom > 0 && rect!!.top < height)
+        }
     }
 
     /** The first table: selected by a long press, its first column border dragged 90 px right, its first row's bottom 50 px down. */

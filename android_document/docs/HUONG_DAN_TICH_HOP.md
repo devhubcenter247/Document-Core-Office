@@ -538,6 +538,58 @@ Các class public trong package `com.reader.pdfviewer` và các package con đư
 publish để app tích hợp có thể gọi trực tiếp. Các thành phần không public vẫn là implementation
 nội bộ và có thể thay đổi giữa các phiên bản.
 
+### 4.6. Trình chiếu PowerPoint: `SlideShowView`
+
+`SlideShowView` phát bài trình chiếu: mỗi slide phủ kín view và vào bằng hiệu ứng chuyển cảnh của nó,
+animation của từng shape chạy theo từng lần chạm, link trên slide bấm được, có bút, tẩy và con trỏ
+laser. View **không có nút nào**: app tự vẽ thanh điều khiển và gọi các hàm bên dưới.
+
+Nguồn trình chiếu lấy từ một `DocumentView` đang mở file `.pptx` hoặc `.ppt` (file `.ppt` không có
+animation). `DocumentView` đó phải còn mở trong lúc trình chiếu.
+
+```kotlin
+// 1. Ở màn đang xem tài liệu
+documentView.prepareSlideShow { source ->
+    if (source == null) return@prepareSlideShow   // chưa mở xong, hoặc không phải bài trình chiếu
+    slideShow.start(source)                        // cùng màn hình
+    // hoặc giữ `source` lại và mở Activity trình chiếu riêng, rồi gọi start(source) ở đó
+}
+
+// 2. Thanh điều khiển của app
+btnNext.setOnClickListener { slideShow.next() }
+btnPrevious.setOnClickListener { slideShow.previous() }
+btnPen.setOnClickListener { slideShow.ink = SlideShowView.Ink.PEN }
+btnAuto.setOnClickListener { slideShow.setAutoAdvance(5_000, loop = false) }
+
+slideShow.listener = object : SlideShowView.Listener {
+    override fun onSlideChanged(slide: Int, count: Int) { counter.text = "${slide + 1}/$count" }
+    override fun onEnded(ended: Boolean) { endScreen.isVisible = ended }
+    override fun onLongPress() { bar.isVisible = !bar.isVisible }
+}
+
+// 3. Phím âm lượng, phím mũi tên, bút trình chiếu
+override fun dispatchKeyEvent(event: KeyEvent) = slideShow.handleKey(event) || super.dispatchKeyEvent(event)
+```
+
+Chạm vào slide là sang bước tiếp theo (chạm ở 1/4 bên trái là lùi), vuốt ngang cũng vậy. Đang sửa
+bài trình chiếu thì bản trình chiếu phát cả những thay đổi chưa lưu.
+
+| Hàm / thuộc tính | Mô tả |
+|---|---|
+| `start(source)`, `stop()` | Bắt đầu / kết thúc. View tự dừng khi rời khỏi cửa sổ. |
+| `next()`, `previous()` | Bước tiếp / lùi một bước (animation của lần chạm, rồi mới tới slide). |
+| `goTo(slide)` | Tới slide (đếm từ 0), kể cả slide ẩn. |
+| `currentSlide`, `slideCount`, `step` | Slide đang chiếu, tổng số slide, số lần chạm đã phát trên slide này. |
+| `isEnded`, `isAnimating` | Đã qua slide cuối; đang có hiệu ứng chạy. |
+| `ink`, `inkColor`, `clearInk()` | `NONE`, `PEN`, `ERASER`, `LASER`; màu bút; xoá nét trên slide đang chiếu. |
+| `setAutoAdvance(afterMs, loop)` | Tự chuyển sau `afterMs` (null: chỉ theo thời gian đặt sẵn của slide); `loop`: chiếu lại từ đầu. |
+| `handleKey(event)` | Xử lý phím tới/lùi, trả về true khi đã xử lý. |
+| `Source.slideCount`, `title(slide)`, `isHidden(slide)` | Để app vẽ danh sách slide. |
+
+`SlideShowView.Listener`: `onSlideChanged(slide, count)`, `onEnded(ended)`, `onLongPress()`,
+`onLink(url): Boolean` (trả về true nếu app tự mở link, không thì view mở bằng `ACTION_VIEW`),
+`onSlideNotReady(slide)`.
+
 ## 5. Xử lý tài liệu: `DocumentTools`
 
 `DocumentTools` xử lý tài liệu mà không cần giao diện. Tạo một lần rồi dùng lại:
@@ -873,6 +925,10 @@ Xem mục 4.3 và 4.4.
 | `onError(error: DocumentException)` | Không mở được tài liệu, tài liệu lỗi sau khi đã mở (xem mục 6), hoặc không ghi được thay đổi (`STORAGE`). |
 | `onEditingChanged(editing)` | Thanh sửa hiện hoặc ẩn. |
 | `onSaved(file)` | Đã ghi thay đổi. |
+
+### `SlideShowView` (View)
+
+Xem mục 4.6. `DocumentView.prepareSlideShow(startAt = currentPage, ready)` tạo `SlideShowView.Source`.
 
 ### `EditFeature` (enum)
 

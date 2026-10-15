@@ -91,6 +91,10 @@ Thanh sửa gồm: hàng trên cùng (Hoàn tác, Làm lại, dòng trạng thá
 | `icons` | `null` | Icon riêng cho từng nút và dấu ✓ của ô công thức. `null` dùng icon của SDK |
 | `backIcon` | `null` | Icon nút quay lại của màn `DocumentViewer`. `null` dùng icon của SDK |
 | `inputStyler` | `null` | Hàm chỉnh thêm ô công thức Excel (mục "Ô nhập liệu") |
+| `textBarBackground` | `null` | Nền thanh ngữ cảnh (mục 3b). `null` dùng `toolbarBackground` |
+| `textBarButtonDp` | `36` | Chiều cao mỗi nút của thanh ngữ cảnh; thanh cao thêm 4dp trên và dưới |
+| `textBarIconDp` | `20` | Cỡ icon của thanh ngữ cảnh |
+| `textBarSpacingDp` | `6` | Khoảng cách giữa các nút của thanh ngữ cảnh |
 
 ### Ví dụ: thanh sửa tối
 
@@ -180,7 +184,7 @@ DialogStyle.customizer = DialogStyle.Customizer { _, style -> style.copy(inputSt
 
 ## 3. Chỉnh sâu từng nút: `itemStyler`
 
-Nếu màu và kích thước chưa đủ, ví dụ bạn muốn nền riêng, hiệu ứng ripple khác hay ẩn vài nút, hãy truyền một `EditStyle.ItemStyler`. Nó được gọi trên **mọi nút** của thanh (kể cả nút **Lưu**) ngay sau khi nút được tạo, kèm `EditAction` của nút đó.
+Nếu màu và kích thước chưa đủ, ví dụ bạn muốn nền riêng, hiệu ứng ripple khác hay ẩn vài nút, hãy truyền một `EditStyle.ItemStyler`. Nó được gọi trên **mọi nút** của thanh (kể cả nút **Lưu**) ngay sau khi nút được tạo, kèm `EditAction` của nút đó. Các nút của thanh ngữ cảnh (mục 3b) cũng đi qua nó. Ở thanh này, nút đang bật (B, I, U, căn lề) chỉ được đặt `isSelected = true`, nên nền và màu icon bạn đặt vẫn giữ nguyên. Muốn nút có màu riêng khi bật thì dùng drawable/`ColorStateList` có `state_selected`.
 
 ```kotlin
 EditStyle.customizer = EditStyle.Customizer { context, style ->
@@ -214,6 +218,35 @@ Lưu ý:
 - Hàm được gọi trên luồng chính, mỗi lần một thanh sửa mở ra. Hãy để nó chạy nhanh: không đọc file, không gọi mạng.
 
 ---
+
+## 3b. Thanh ngữ cảnh
+
+Khi người dùng chọn một thứ trong tài liệu, SDK hiện một hàng nút ngay trên bàn phím (hoặc trên thanh sửa) với đúng các lệnh dùng được cho thứ đó. Không còn menu nổi Cắt/Chép/Dán trên vùng chọn.
+
+| Ngữ cảnh (`EditContext`) | Khi nào | Nút mặc định |
+|---|---|---|
+| `TEXT` | Word: con trỏ hoặc chữ đang bôi | Cắt, Chép, Dán, B, I, U, màu chữ, tô sáng, font, − cỡ +, căn lề, gạch đầu dòng, đánh số |
+| `TABLE` | Word: con trỏ hoặc vùng chọn trong bảng | Chọn bảng, thêm hàng trên/dưới, thêm cột trái/phải, xoá hàng, xoá cột, Cắt, Chép, Dán, rồi các nút định dạng chữ |
+| `PICTURE` | Word: ảnh đang chọn | Xoá |
+| `CELLS` | Excel: ô hoặc vùng ô đang chọn | Cắt, Chép, Dán, Xoá nội dung, B, I, U, màu chữ, màu nền, căn lề, xuống dòng, gộp ô, viền, định dạng số |
+| `SHAPE` | PowerPoint: hình đang chọn | Cắt, Chép, Dán, Xoá, Xoay; hình có chữ thêm B, I, U, màu, cỡ, căn lề (áp cho cả chữ của hình) |
+| `SHAPE_TEXT` | PowerPoint: đang gõ chữ trong hình | `textFormatBarActions` (B, I, U, màu, font, − cỡ +, căn lề) |
+
+Nút không dùng được lúc đó (Chép khi chưa bôi gì, Dán khi clipboard trống) bị làm mờ. Nhấn giữ một nút để xem tên lệnh.
+
+```kotlin
+// đổi nút của một ngữ cảnh (danh sách rỗng: ẩn thanh ở ngữ cảnh đó)
+editor.contextCommands = DocumentEditor.ContextCommands { context, defaults ->
+    when (context) {
+        EditContext.PICTURE -> emptyList()
+        EditContext.TABLE -> defaults.take(7)
+        else -> defaults
+    }
+}
+// hoặc tắt hẳn và tự làm thanh: đọc editor.context, editor.contextActions(),
+// isEnabled / isActive trong Listener.onStateChanged, rồi editor.run(action)
+editor.contextBar = false
+```
 
 ## 4. `DialogStyle`: hộp thoại
 

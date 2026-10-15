@@ -8,7 +8,9 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.common.MlKitException
 import com.google.mlkit.nl.languageid.LanguageIdentification
+import com.google.mlkit.nl.languageid.LanguageIdentifier
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
@@ -73,7 +75,7 @@ class PdfTranslator(private val context: Context, private val pdfTools: PdfTools
         val sample = paragraphs.joinToString(" ").take(LANGUAGE_SAMPLE_LENGTH)
         val client = LanguageIdentification.getClient()
         val tag = try {
-            client.identifyLanguage(sample).await()
+            identifyWaiting(client, sample)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -84,6 +86,20 @@ class PdfTranslator(private val context: Context, private val pdfTools: PdfTools
 
         return TranslateLanguage.fromLanguageTag(tag.substringBefore('-'))
             ?: throw TranslateException(TranslateError.UnknownLanguage)
+    }
+
+    /** Identifies [sample]; while Google Play services still downloads the model (first use), waits for it. */
+    private suspend fun identifyWaiting(client: LanguageIdentifier, sample: String): String {
+        var waited = 0L
+        while (true) {
+            try {
+                return client.identifyLanguage(sample).await()
+            } catch (e: MlKitException) {
+                if (e.errorCode != MlKitException.UNAVAILABLE || waited >= MODEL_WAIT_MS) throw e
+                delay(MODEL_RETRY_MS)
+                waited += MODEL_RETRY_MS
+            }
+        }
     }
 
     private suspend fun translateParagraphs(
@@ -230,6 +246,8 @@ class PdfTranslator(private val context: Context, private val pdfTools: PdfTools
         private const val LINE_SPACING = 1.2f
         private const val LANGUAGE_SAMPLE_LENGTH = 1000
         private const val DOWNLOAD_POLL_MS = 300L
+        private const val MODEL_RETRY_MS = 2_000L
+        private const val MODEL_WAIT_MS = 90_000L
         private const val PARAGRAPH_END = ".!?:;。！？"
 
         internal fun paragraphsOf(text: String): List<String> {

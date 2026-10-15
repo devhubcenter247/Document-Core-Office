@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.transition.AutoTransition
 import android.transition.TransitionManager
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -41,6 +42,7 @@ import com.alf06.document.reader.ui.home.document.pdf.tools.PdfOrganizeActivity
 import com.alf06.document.reader.ui.home.document.pdf.tools.PdfReaderTools
 import com.alf06.document.reader.ui.home.document.pdf.tools.PdfReadingPrefs
 import com.alf06.document.reader.viewmodel.DocumentViewModel
+import com.reader.pdfviewer.listener.OnLongPressListener
 import com.reader.pdfviewer.pdfium.PdfPasswordException
 import com.ui.baselib.api.parcelable
 import com.ui.baselib.base.BaseActivity
@@ -198,7 +200,7 @@ class ReadPdfActivity : BaseActivity<ActivityReadPdfBinding>(ActivityReadPdfBind
         override val inkColor: Int get() = INK_COLORS[selectedInkColor]
         override val inkWidth: Float get() = INK_WIDTHS[selectedInkWidth]
         override fun saveEdits(done: (Boolean) -> Unit) = saveMarkups { saved -> updateInkButtons(); done(saved) }
-        override fun reload() = reloadDocument()
+        override fun reload(looks: Boolean) = reloadDocument(looks)
         override fun editsChanged() = updateInkButtons()
         override fun showAnnotationBar(show: Boolean) = setInkMode(show)
         override fun jumpTo(page: Int) = jumpToPageWhenReady(page)
@@ -209,14 +211,16 @@ class ReadPdfActivity : BaseActivity<ActivityReadPdfBinding>(ActivityReadPdfBind
         organizeLauncher.launch(PdfOrganizeActivity.intent(this, file, pdfPassword))
     }
 
-    /** The file changed on disk (pages organized): open it again near the same page. */
-    private fun reloadDocument() {
+    /** The file changed on disk (pages organized): open it again near the same page; [looks] false keeps the thumbnails. */
+    private fun reloadDocument(looks: Boolean = true) {
         if (readerDisposed) return
         pdfTools.stopModes()
         pdfLoaded = false
         lifecycleScope.launch {
-            viewModel.invalidateThumbnails()
-            thumbnailAdapter.refreshThumbnails()
+            if (looks) {
+                viewModel.invalidateThumbnails()
+                thumbnailAdapter.refreshThumbnails()
+            }
             loadPdf()
         }
     }
@@ -298,6 +302,9 @@ class ReadPdfActivity : BaseActivity<ActivityReadPdfBinding>(ActivityReadPdfBind
             .setInkColor(INK_COLORS[selectedInkColor])
             .setInkWidth(INK_WIDTHS[selectedInkWidth])
             .onInkChange { _, _ -> updateInkButtons() }
+            .onLongPress(object : OnLongPressListener {
+                override fun onLongPress(e: MotionEvent?) { e?.let { pdfTools.longPressed(it.x, it.y) } }
+            })
             .selectionHandleColor(accent)
             .selectionHighlightColor(ColorUtils.setAlphaComponent(accent, 0x40))
             .searchHighlightColor(SEARCH_HIGHLIGHT_COLOR)

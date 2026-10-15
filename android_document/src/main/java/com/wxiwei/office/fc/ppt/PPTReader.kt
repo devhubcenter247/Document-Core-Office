@@ -11,6 +11,8 @@
  * 编译器:             android2.2
  * 时间:               下午4:23:51
  */
+@file:Suppress("UNNECESSARY_NOT_NULL_ASSERTION", "SENSELESS_COMPARISON")
+
 package com.wxiwei.office.fc.ppt
 
 import android.graphics.PointF

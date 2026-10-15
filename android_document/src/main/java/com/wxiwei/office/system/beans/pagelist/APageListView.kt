@@ -75,6 +75,7 @@ open class APageListView : AdapterView<Adapter> {
             OpenTrace.mark("pageList.onLayout.skipNotInit")
             return
         }
+        boundsChanged = changed
         if (pageListViewListener!!.getPageListViewMovingPosition() == IPageListViewListener.Moving_Horizontal) layoutHorizontal() else layoutVertical()
         invalidate()
         if (isConfigurationChanged) {
@@ -83,6 +84,10 @@ open class APageListView : AdapterView<Adapter> {
         }
         OpenTrace.mark("pageList.onLayout.end current=$currentIndex childCount=$childCount")
     }
+
+    // The list itself was moved or resized (the keyboard came up, say): the pages are still where
+    // the old bounds put them, which is not the user scrolling to another page
+    private var boundsChanged = false
 
     private fun removeUnusedViews() {
         val indexes = IntArray(childViewsCache.size()) { childViewsCache.keyAt(it) }
@@ -100,7 +105,7 @@ open class APageListView : AdapterView<Adapter> {
     private fun layoutHorizontal() {
         var currentView = childViewsCache.get(currentIndex)
         if (!isResetLayout) {
-            if (currentView != null && kotlin.math.abs(currentView.left) < currentView.width) {
+            if (currentView != null && !boundsChanged && kotlin.math.abs(currentView.left) < currentView.width) {
             val offset = getScreenSizeOffset(currentView)
             if (currentView.left + currentView.measuredWidth + offset.x + GAP / 2 + eventManage!!.getScrollX() < width / 2 && currentIndex + 1 < pageAdapter!!.count && !eventManage!!.isOnFling()) { postUnRepaint(currentView); post(eventManage); currentIndex++ }
             else if (currentView.left - offset.x - GAP / 2 + eventManage!!.getScrollX() >= width / 2 && currentIndex > 0 && !eventManage!!.isOnFling()) { postUnRepaint(currentView); post(eventManage); currentIndex-- }
@@ -139,7 +144,7 @@ open class APageListView : AdapterView<Adapter> {
     private fun layoutVertical() {
         var currentView = childViewsCache.get(currentIndex)
         if (!isResetLayout) {
-            if (currentView != null) {
+            if (currentView != null && !boundsChanged) {
             val offset = getScreenSizeOffset(currentView)
             if (currentView.top + currentView.measuredHeight + offset.y + GAP / 2 + eventManage!!.getScrollY() < height / 2 && currentIndex + 1 < pageAdapter!!.count && !eventManage!!.isOnFling()) { postUnRepaint(currentView); post(eventManage); currentIndex++; Log.e("current ++", currentIndex.toString()) }
             else if (currentView.top - offset.y - GAP / 2 + eventManage!!.getScrollY() >= height / 2 && currentIndex > 0 && !eventManage!!.isOnFling()) { postUnRepaint(currentView); post(eventManage); currentIndex--; Log.e("current --", currentIndex.toString()) }
@@ -267,6 +272,8 @@ open class APageListView : AdapterView<Adapter> {
     @get:JvmName("getCurrentPageViewProperty")
     val currentPageView: APageListItem get() = childViewsCache.get(currentIndex)!!
     fun getCurrentPageView(): APageListItem = currentPageView
+    /** The view of the current page, or null while it is not made yet (a document just opened). */
+    fun currentPageViewOrNull(): APageListItem? = childViewsCache.get(currentIndex)
     fun getPageListViewListener(): IPageListViewListener = pageListViewListener!!
     private fun createPageView(pageIndex: Int): APageListItem { var view = childViewsCache.get(pageIndex); if (view == null) { view = pageAdapter!!.getView(pageIndex, if (pageViewCache.isEmpty()) null else pageViewCache.removeFirst(), this) as APageListItem; if (view.layoutParams == null) view.layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT); addViewInLayout(view, 0, view.layoutParams, true); childViewsCache.append(pageIndex, view); view.measure(MeasureSpec.EXACTLY or (view.getPageWidth() * zoom).toInt(), MeasureSpec.EXACTLY or (view.getPageHeight() * zoom).toInt()) }; return view }
     fun getScrollBounds(left: Int, top: Int, right: Int, bottom: Int): Rect { var xmin = width - right; var xmax = -left; var ymin = height - bottom; var ymax = -top; if (xmin > xmax) { xmin = (xmin + xmax) / 2; xmax = xmin }; if (ymin > ymax) { ymin = (ymin + ymax) / 2; ymax = ymin }; return Rect(xmin, ymin, xmax, ymax) }

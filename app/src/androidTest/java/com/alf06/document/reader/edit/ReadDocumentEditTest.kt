@@ -274,7 +274,7 @@ class ReadDocumentEditTest {
         val target = shapes.last { it.kind == com.wxiwei.office.editor.pptx.ShapeKind.TEXT && it.rectEmu.width > 0 }
         val r = target.rectEmu
         val center = com.wxiwei.office.editor.pptx.Point(r.x + r.width / 2, r.y + r.height / 2)
-        val expected = com.wxiwei.office.editor.slide.SlideGeometry.hitTest(shapes, center)!!
+        val expected = com.wxiwei.office.editor.slide.SlideGeometry.pick(shapes, center)!!
         launch(file, DocumentType.Ppt).use { scenario ->
             lateinit var viewer: OfficeDocumentView
             scenario.onActivity { viewer = it.findViewById(R.id.officeViewer) }
@@ -625,7 +625,7 @@ class ReadDocumentEditTest {
         val target = shapes.last { it.kind == com.wxiwei.office.editor.pptx.ShapeKind.TEXT && it.rectEmu.width > 0 }
         val r = target.rectEmu
         val center = com.wxiwei.office.editor.pptx.Point(r.x + r.width / 2, r.y + r.height / 2)
-        val expected = com.wxiwei.office.editor.slide.SlideGeometry.hitTest(shapes, center)!!
+        val expected = com.wxiwei.office.editor.slide.SlideGeometry.pick(shapes, center)!!
         launch(file, DocumentType.Ppt).use { scenario ->
             lateinit var viewer: OfficeDocumentView
             scenario.onActivity { viewer = it.findViewById(R.id.officeViewer) }
@@ -742,7 +742,7 @@ class ReadDocumentEditTest {
         val target = shapes.last { it.kind == com.wxiwei.office.editor.pptx.ShapeKind.TEXT && it.rectEmu.width > 0 && it.text.length > 4 }
         val r = target.rectEmu
         val center = com.wxiwei.office.editor.pptx.Point(r.x + r.width / 2, r.y + r.height / 2)
-        val expected = com.wxiwei.office.editor.slide.SlideGeometry.hitTest(shapes, center)!!
+        val expected = com.wxiwei.office.editor.slide.SlideGeometry.pick(shapes, center)!!
         launch(file, DocumentType.Ppt).use { scenario ->
             lateinit var viewer: OfficeDocumentView
             scenario.onActivity { viewer = it.findViewById(R.id.officeViewer) }
@@ -768,14 +768,16 @@ class ReadDocumentEditTest {
             instrumentation.runOnMainSync {
                 val edit = find<EditText>(viewer) { it is EditText }!!
                 edit.setSelection(0, 3)
-                // the selection menu the user gets on a long-press, with its "Đậm" item
-                val callback = edit.customSelectionActionModeCallback!!
-                val mode = edit.startActionMode(callback)!!
-                val bold = (0 until mode.menu.size()).map { mode.menu.getItem(it) }.first { it.title == edit.context.getString(com.wxiwei.office.R.string.docsdk_edit_bold) }
-                assertTrue(callback.onActionItemClicked(mode, bold))
+                // the "Đậm" button of the format bar over the keyboard
+                find<View>(viewer) { it.tag == "BOLD" && it.isShown }!!.performClick()
             }
             Thread.sleep(1500)
-            scenario.onActivity { assertTrue("editor closed to show the slide", find<EditText>(viewer) { it is EditText } == null) }
+            // the editor stays open on the same part, for another format
+            scenario.onActivity {
+                val edit = find<EditText>(viewer) { it is EditText }
+                assertTrue("editor still open", edit != null)
+                assertEquals(0 to 3, edit!!.selectionStart to edit.selectionEnd)
+            }
             screenshot("slide_format_selection")
             scenario.onActivity { a -> find<View>(a.findViewById<ViewGroup>(R.id.editPanel)) { it.tag == "SAVE" }!!.performClick() }
             Thread.sleep(1500)

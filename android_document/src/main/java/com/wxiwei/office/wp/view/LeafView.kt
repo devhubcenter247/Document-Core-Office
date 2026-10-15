@@ -142,7 +142,7 @@ open class LeafView : AbstractView {
 
         AttrManage.instance().fillCharAttr(charAttr, paraElem.getAttribute(), elem.getAttribute())
         // real bold/italic faces when the font has them, synthesized by Android otherwise
-        paint.typeface = FontTypefaceManage.instance().getFontTypeface(charAttr.fontIndex, charAttr.isBold, charAttr.isItalic)
+        FontTypefaceManage.instance().applyTo(paint, charAttr.fontIndex, charAttr.isBold, charAttr.isItalic)
         // 字号
         if (charAttr.subSuperScriptType > 0) {
             paint.textSize = charAttr.fontSizeF * (charAttr.fontScale / 100f) * MainConstant.POINT_TO_PIXEL / 2

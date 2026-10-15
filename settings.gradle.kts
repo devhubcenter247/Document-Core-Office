@@ -26,7 +26,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PDF Document Reader"
+rootProject.name = "Core Document Reader"
 include(":app")
 include(":lib")
 include(":android_document")

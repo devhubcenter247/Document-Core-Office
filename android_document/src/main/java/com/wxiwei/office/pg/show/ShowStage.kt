@@ -1,4 +1,10 @@
-package com.alf06.document.reader.ui.home.document.office.show
+/*
+ * Copyright (c) 2026 dongb2002. All rights reserved.
+ *
+ * Proprietary and confidential. Unauthorized copying, modification or distribution of this
+ * file, via any medium, is strictly prohibited without the written permission of dongb2002.
+ */
+package com.wxiwei.office.pg.show
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -22,7 +28,7 @@ import com.wxiwei.office.pg.view.SlideDrawKit
  * One slide on the stage: the picture of what does not move, and every animated shape as its own
  * view at its place, so effects run on the GPU at the display's frame rate.
  */
-class SlideFrame(context: Context, val index: Int, val layers: SlideDrawKit.Layers) : FrameLayout(context) {
+internal class SlideFrame(context: Context, val index: Int, val layers: SlideDrawKit.Layers) : FrameLayout(context) {
     val base = ImageView(context).apply { setImageBitmap(layers.base); scaleType = ImageView.ScaleType.FIT_XY }
     val shapes = HashMap<Int, ImageView>()
 
@@ -59,7 +65,7 @@ class SlideFrame(context: Context, val index: Int, val layers: SlideDrawKit.Laye
  * Plays a slide's effects and moves between slides with their transitions. [onSettled] runs when
  * nothing is moving any more (auto advance waits for it).
  */
-class ShowStage(context: Context) : FrameLayout(context) {
+internal class ShowStage(context: Context) : FrameLayout(context) {
     var current: SlideFrame? = null; private set
     private val running = ArrayList<Animator>()
     var onSettled: (() -> Unit)? = null

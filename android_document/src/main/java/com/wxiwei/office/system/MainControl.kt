@@ -5,6 +5,8 @@
  * The modifications are proprietary to dongb2002. The original copyright and license notice
  * of this file, where present below, remains in effect for the original portions.
  */
+@file:Suppress("DEPRECATION", "USELESS_ELVIS", "UNNECESSARY_SAFE_CALL", "UNCHECKED_CAST")
+
 package com.wxiwei.office.system
 
 import android.app.Activity

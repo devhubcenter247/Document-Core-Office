@@ -61,6 +61,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * It supports animations, zoom, cache, and swipe.
@@ -1910,6 +1911,7 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
      * Called when a handle starts being dragged, so the finger keeps its distance to the text it points to
      */
     fun startSelectionHandleDrag(isStart: Boolean, x: Float, y: Float) {
+        pressedWord = null
         val anchor = if (isStart) selectionStartAnchor else selectionEndAnchor
         handleDragOffsetX = if (anchor != null) anchor.x - x else 0f
         handleDragOffsetY = if (anchor != null) anchor.y - y else 0f
@@ -2206,6 +2208,13 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
         return page.takeIf { pageViewRect(it)?.contains(viewX, viewY) == true }
     }
 
+    /** True when [page] has no usable text to select (a scanned page): it needs OCR first. */
+    fun isScannedPage(page: Int): Boolean {
+        val file = pdfFile ?: return false
+        if (page !in 0 until file.pagesCount) return false
+        return DocumentTextIndex.needsOcr(file.getPageText(page).orEmpty())
+    }
+
     /** Map PDF bounds (top > bottom) to normalized view bounds, respecting rotation and zoom. */
     fun pageRectToView(page: Int, pageRect: RectF): RectF? {
         requireEditThread()
@@ -2235,13 +2244,16 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
         val font = fontPath ?: com.reader.pdfviewer.util.SystemFonts.unicodeFor(context, text)
         val name = "pdfview-text-" + java.util.UUID.randomUUID()
         val first = file.addFreeText(page, text, font, sizePt, pageX, pageY, color, name) ?: return null
-        // moved or resized: the text keeps its lines, its size follows the height of the bounds
+        // moved or resized: the text keeps its lines, its size follows the height of the bounds; its
+        // frame is then where the text really is (a frame made wider or narrower does not stretch it)
         val origin = RectF(first)
+        var landed: RectF? = null
         val place = { r: RectF ->
             val size = sizePt * (r.top - r.bottom) / (origin.top - origin.bottom)
-            file.addFreeText(page, text, font, size, pageX + (r.left - origin.left), pageY + (r.top - origin.top), color, name) != null
+            landed = file.addFreeText(page, text, font, size, pageX + (r.left - origin.left), pageY + (r.top - origin.top), color, name)
+            landed != null
         }
-        return registerPlaced(page, name, origin, AREA_PAD, place)
+        return registerPlaced(page, name, origin, AREA_PAD, place, landedAt = { landed })
     }
 
     /** Add an image in PDF bounds (right > left, top > bottom). Retains a private bitmap for redo. */
@@ -2280,7 +2292,7 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
 
     /** A picture already in the document: moving it keeps its pixels, only adding it again (redo, saving) writes them. */
     private fun registerImage(file: PdfFile, page: Int, name: String, rect: RectF, copy: Bitmap): String =
-        registerPlaced(page, name, rect, AREA_PAD, { r -> file.addImage(page, r, copy, name) }) { r -> file.moveImage(page, name, r) }
+        registerPlaced(page, name, rect, AREA_PAD, { r -> file.addImage(page, r, copy, name) }, move = { r -> file.moveImage(page, name, r) })
 
     /** Add a sticky note whose icon's top left is at a PDF point. Returns its NM name, or null. */
     fun addNote(page: Int, pageX: Float, pageY: Float, text: String, @ColorInt color: Int = NOTE_COLOR): String? {
@@ -2311,7 +2323,9 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
      * [place] adds it at bounds, [move] (when it has one) changes the bounds of the one there.
      * [pad]: how far, in points, it may draw outside its bounds.
      */
-    private class Placed(val page: Int, var bounds: RectF, val pad: Float, val place: (RectF) -> Boolean, val move: ((RectF) -> Boolean)?)
+    /** [landedAt]: where the last [place] really put it, when that differs from the bounds asked for (text). */
+    private class Placed(val page: Int, var bounds: RectF, val pad: Float, val place: (RectF) -> Boolean, val move: ((RectF) -> Boolean)?,
+                         val landedAt: (() -> RectF?)? = null)
     private val placed = HashMap<String, Placed>()
 
     // Pictures whose rectangle alone was changed by a move (see PdfiumCore.moveImage): their
@@ -2326,8 +2340,8 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
 
     /** Records an annotation that is in the document at [bounds] already. */
     private fun registerPlaced(page: Int, name: String, bounds: RectF, pad: Float, place: (RectF) -> Boolean,
-                               move: ((RectF) -> Boolean)? = null): String {
-        val item = Placed(page, RectF(bounds), pad, place, move)
+                               move: ((RectF) -> Boolean)? = null, landedAt: (() -> RectF?)? = null): String {
+        val item = Placed(page, RectF(bounds), pad, place, move, landedAt)
         placed[name] = item
         val area = shownArea(page, bounds, pad)
         recordAddition(page, name, area) { place(item.bounds) }
@@ -2353,12 +2367,12 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
             annotationCache.clear()
             item.move?.let { move -> return move(r).also { moved -> if (moved) { item.bounds = RectF(r); movedImages[name] = item } } }
             if (!file.removeAnnotByName(item.page, name)) return false
-            if (item.place(r)) { item.bounds = RectF(r); return true }
+            if (item.place(r)) { item.bounds = RectF(item.landedAt?.invoke() ?: r); return true }
             item.place(item.bounds) // put it back where it was
             return false
         }
         if (!put(to)) return false
-        val area = union(shownArea(item.page, from, item.pad), shownArea(item.page, to, item.pad))
+        val area = union(union(shownArea(item.page, from, item.pad), shownArea(item.page, to, item.pad)), shownArea(item.page, item.bounds, item.pad))
         editUndo.add(EditRecord(item.page, name, { put(to) }, { put(from) }, area = area))
         editRedo.clear()
         inkChanged(item.page, area)
@@ -2582,6 +2596,114 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
         inkRevisions[info.page] = (inkRevisions[info.page] ?: 0) + 1
         inkChanged(info.page, area)
         return true
+    }
+
+    /**
+     * The eraser: takes off the part of the pen strokes drawn in this session that lies within
+     * [radius] view pixels of a view point, leaving the rest of each stroke as strokes of their
+     * own. True when something was erased. With [sameRub] what is erased joins the erasing before
+     * it as one undo step (the finger is still rubbing). Call on the main thread.
+     */
+    fun eraseInkAt(viewX: Float, viewY: Float, radius: Float, sameRub: Boolean = false): Boolean {
+        requireEditThread()
+        val file = pdfFile ?: return false
+        if (restoring) return false
+        val (page, center) = viewToPagePoint(viewX, viewY) ?: return false
+        val mapping = pageMapping(page) ?: return false
+        val widthPoints = pageWidthPoints.getOrPut(page) { file.getPageWidthPoint(page) }
+        if (widthPoints <= 0) return false
+        val reach = radius * widthPoints / file.getScaledPageSize(page, zoom).width
+        val alive = getAnnotations(page).mapNotNullTo(HashSet()) { it.name }
+        var erased = false
+        for (stroke in sessionInk.values.filter { it.page == page && it.name in alive }) {
+            val pieces = cutStroke(stroke.points, center.x, center.y, reach + stroke.width / 2) ?: continue
+            if (!file.removeAnnotByName(page, stroke.name)) continue
+            val revision = (inkRevisions[page] ?: 0) + 1
+            inkRevisions[page] = revision
+            val parts = pieces.map { points ->
+                val shown = points.copyOf().also { mapping.toShown.mapPoints(it) }
+                InkStroke(page, points, List(points.size / 2) { PointF(shown[it * 2], shown[it * 2 + 1]) },
+                    stroke.color, stroke.width, "pdfview-ink-" + java.util.UUID.randomUUID(), revision)
+            }
+            fun add(part: InkStroke) = file.addInk(page, part.points, part.width, part.color, part.name)
+            pendingInk.removeAll { it.name == stroke.name }
+            for (part in parts) {
+                if (!add(part)) continue
+                sessionInk[part.name] = part
+                sessionAnnotations[part.name] = EditRecord(page, part.name, { add(part) }, { file.removeAnnotByName(page, part.name) })
+                pendingInk.add(part)
+            }
+            val bounds = RectF(stroke.points[0], stroke.points[1], stroke.points[0], stroke.points[1])
+            for (i in stroke.points.indices step 2) bounds.union(stroke.points[i], stroke.points[i + 1])
+            val area = shownArea(page, bounds, AREA_PAD + stroke.width)
+            val record = EditRecord(page, stroke.name,
+                apply = {
+                    file.removeAnnotByName(page, stroke.name).also { if (it) parts.forEach { part -> add(part) } }
+                },
+                revert = {
+                    parts.forEach { part -> file.removeAnnotByName(page, part.name) }
+                    pendingInk.removeAll { pending -> parts.any { it.name == pending.name } }
+                    add(stroke)
+                }, area = area)
+            val before = editUndo.lastOrNull()
+            if ((sameRub || erased) && before != null && before === lastErase && before.page == page) {
+                editUndo[editUndo.lastIndex] = EditRecord(page, before.name, { before.apply() && record.apply() },
+                    { record.revert() && before.revert() }, area = union(before.area, area))
+            } else {
+                editUndo.add(record)
+            }
+            lastErase = editUndo.last()
+            editRedo.clear()
+            inkChanged(page, area)
+            erased = true
+        }
+        return erased
+    }
+
+    // the undo step of the latest erasing, which the next one of the same rub joins
+    private var lastErase: EditRecord? = null
+
+    /**
+     * What is left of the line through [points] (x, y pairs) outside the circle of radius [r]
+     * around ([cx], [cy]), piece by piece; null when the circle does not touch the line.
+     */
+    private fun cutStroke(points: FloatArray, cx: Float, cy: Float, r: Float): List<FloatArray>? {
+        val pieces = ArrayList<FloatArray>()
+        // the piece being followed: it ends at the last point seen when that one is outside the circle
+        var piece = ArrayList<Float>()
+        var cut = false
+        fun close() {
+            if (piece.size >= 4) pieces.add(piece.toFloatArray())
+            piece = ArrayList()
+        }
+        var ax = points[0]
+        var ay = points[1]
+        if ((ax - cx) * (ax - cx) + (ay - cy) * (ay - cy) < r * r) cut = true else { piece.add(ax); piece.add(ay) }
+        for (i in 2 until points.size step 2) {
+            val bx = points[i]
+            val by = points[i + 1]
+            val dx = bx - ax
+            val dy = by - ay
+            val a = dx * dx + dy * dy
+            val b = 2 * ((ax - cx) * dx + (ay - cy) * dy)
+            val c = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy) - r * r
+            val root = b * b - 4 * a * c
+            // the segment is inside the circle from t1 to t2 of its length
+            val t1 = if (a > 0 && root > 0) (-b - sqrt(root)) / (2 * a) else 1f
+            val t2 = if (a > 0 && root > 0) (-b + sqrt(root)) / (2 * a) else 0f
+            if (t1 < 1 && t2 > 0) {
+                cut = true
+                if (t1 > 0) { piece.add(ax + t1 * dx); piece.add(ay + t1 * dy) }
+                close()
+                if (t2 < 1) { piece.add(ax + t2 * dx); piece.add(ay + t2 * dy); piece.add(bx); piece.add(by) }
+            } else if (a > 0 || piece.isNotEmpty()) {
+                piece.add(bx); piece.add(by)
+            }
+            ax = bx
+            ay = by
+        }
+        close()
+        return if (cut) pieces else null
     }
 
     /**
@@ -3355,12 +3477,31 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
         }
 
         selectionPage = hit.page
-        selectionStart = hit.charIndex
-        selectionEnd = hit.charIndex
+        // a long press selects the word under the finger, not one letter
+        val word = wordAt(hit.page, hit.charIndex)
+        selectionStart = word.first
+        selectionEnd = word.last
+        pressedWord = word
         selectedText = computeSelectedText()
         callbacks.callOnSelectionChanged(true)
         redraw()
         return true
+    }
+
+    // the word a long press selected: dragging on from it keeps it selected, whichever way
+    private var pressedWord: IntRange? = null
+
+    /** Char indexes of the word holding [charIndex] on [page] (letters, digits and their marks); the char alone when it is not in a word. */
+    private fun wordAt(page: Int, charIndex: Int): IntRange {
+        val text = pdfFile?.getPageText(page).orEmpty()
+        fun inWord(i: Int) = i in text.indices && text[i].let { c ->
+            c.isLetterOrDigit() || Character.getType(c).let { it == Character.NON_SPACING_MARK.toInt() || it == Character.COMBINING_SPACING_MARK.toInt() }
+        }
+        if (!inWord(charIndex)) return charIndex..charIndex
+        var a = charIndex; var b = charIndex
+        while (inWord(a - 1)) a--
+        while (inWord(b + 1)) b++
+        return a..b
     }
 
     fun updateTextSelection(x: Float, y: Float): Boolean {
@@ -3373,6 +3514,8 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
             return false
         }
 
+        // from a pressed word, the selection keeps the whole word on the side it starts from
+        pressedWord?.let { w -> selectionStart = if (hit.charIndex < w.first) w.last else w.first }
         if (selectionEnd != hit.charIndex) {
             selectionEnd = hit.charIndex
             selectedText = computeSelectedText()
@@ -3383,6 +3526,7 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
     }
 
     fun finishTextSelection() {
+        pressedWord = null
         if (hasTextSelection()) {
             selectedText = computeSelectedText()
             if (selectionPopupEnabled) {
@@ -3393,6 +3537,7 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
     }
 
     private fun clearTextSelectionInternal(redraw: Boolean) {
+        pressedWord = null
         allowSelectionActionPopupAutoShow = false
         dismissSelectionActionPopup()
         val hadSelection = hasTextSelection()

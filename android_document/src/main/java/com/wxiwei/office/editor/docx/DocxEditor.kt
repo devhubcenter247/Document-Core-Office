@@ -245,6 +245,28 @@ class DocxEditor(private val source: File, private val map: DocxSourceMap) {
         if (twips < 0) invalid("Bad row height") else queue(Op(offset, offset, "tblrow", twips.toString(), cell = cell))
     /** Moves the body table holding [offset] before the body paragraph (or table) holding [to], or [after] it. */
     fun moveTable(offset: Long, to: Long, after: Boolean, cell: CellRef? = null): Boolean = queue(Op(offset, offset, "tblmove", "$to,$after", cell = cell))
+    /**
+     * A copy of the body table holding [offset] (or the one [cell] names) as the queued edits make
+     * it, for [pasteTable]; null (see [lastError]) when there is none. Bookmarks and Word's paragraph
+     * ids are left out of the copy, so pasting it twice makes no duplicates.
+     */
+    fun copyTable(offset: Long, cell: CellRef? = null, overrides: Map<Any, InsertOverride> = emptyMap(),
+                  cellFills: Map<Any, List<InsertOverride?>> = emptyMap()): Element? {
+        grabbed = null
+        if (!queue(Op(offset, offset, "tblgrab", cell = cell))) return null
+        try { write(null, overrides, cellFills) } finally { ops.removeAt(ops.lastIndex) }
+        return grabbed
+    }
+    // the table the last [copyTable] took
+    private var grabbed: Element? = null
+
+    /** Puts a copy of [table] (from [copyTable]) before the body paragraph (or table) holding [to], or [after] it. */
+    fun pasteTable(to: Long, after: Boolean, table: Element): Boolean =
+        if (table.name != "tbl" || table.namespaceURI != W.uRI) invalid("Not a table") else queue(Op(to, to, "tblpaste", after.toString(), picture = table))
+
+    /** Removes the body table holding [offset] (or the one [cell] names), keeping a paragraph where it was when one is needed. */
+    fun deleteTable(offset: Long, cell: CellRef? = null): Boolean = queue(Op(offset, offset, "tbldel", cell = cell))
+
     /** Drops the last queued operation (undo of a live edit). */
     fun undoLast(): Boolean = if (ops.isEmpty()) false else { ops.removeAt(ops.lastIndex); true }
     /** Number of queued operations. */
@@ -354,6 +376,9 @@ class DocxEditor(private val source: File, private val map: DocxSourceMap) {
                     "pjc", "pind", "pline", "pspace", "pnum", "plvl", "ppara" -> paragraphFormat(op)
                     "table" -> table(op)
                     "tblmove" -> moveTable(op)
+                    "tblgrab" -> grabTable(op)
+                    "tblpaste" -> pasteTable(op)
+                    "tbldel" -> removeTable(op)
                     "tblcol" -> tableColumn(op)
                     "tblrow" -> tableRow(op)
                     "tblrowins" -> insertRow(op)
@@ -959,6 +984,38 @@ class DocxEditor(private val source: File, private val map: DocxSourceMap) {
             // Word wants a paragraph after a table
             val now = body.elements()!!.filterIsInstance<Element>()
             val next = now.getOrNull(now.indexOf(tbl) + 1)
+            if (next == null || next.name != "p") addBefore(body, next, newElement(W, "p"))
+        }
+        fun grabTable(op: Op) {
+            val tbl = if (op.cell?.table != null) tableOf(op) else bodyChildAt(op.start)
+            if (tbl.name != "tbl" || tbl.namespaceURI != W.uRI) fail(Reason.INVALID_ARGUMENT, "No table at offset")
+            val copy = tbl.createCopy()!!
+            val drop = ArrayList<Element>()
+            walk(copy) { e ->
+                if (e.namespaceURI == W.uRI && e.name in setOf("bookmarkStart", "bookmarkEnd")) drop.add(e)
+                e.attributes()?.filterIsInstance<com.wxiwei.office.fc.dom4j.Attribute>()?.forEach { a -> if (a.getName() in setOf("paraId", "textId")) e.remove(a) }
+            }
+            drop.forEach { it.detach() }
+            grabbed = copy
+        }
+        fun removeTable(op: Op) {
+            val tbl = if (op.cell?.table != null) tableOf(op) else bodyChildAt(op.start)
+            if (tbl.name != "tbl" || tbl.namespaceURI != W.uRI) fail(Reason.INVALID_ARGUMENT, "No table at offset")
+            val siblings = body.elements()!!.filterIsInstance<Element>()
+            val next = siblings.getOrNull(siblings.indexOf(tbl) + 1)
+            val prev = siblings.getOrNull(siblings.indexOf(tbl) - 1)
+            tbl.detach()
+            // the body keeps a paragraph before its section properties, and Word keeps one after a table
+            if ((prev == null || prev.name == "tbl") && (next == null || next.name != "p")) addBefore(body, next, newElement(W, "p"))
+        }
+        fun pasteTable(op: Op) {
+            val target = bodyChildAt(op.start)
+            val copy = (op.picture as Element).createCopy()!!
+            val siblings = body.elements()!!.filterIsInstance<Element>()
+            addBefore(body, if (op.value.toBoolean()) siblings.getOrNull(siblings.indexOf(target) + 1) else target, copy)
+            // Word wants a paragraph after a table
+            val now = body.elements()!!.filterIsInstance<Element>()
+            val next = now.getOrNull(now.indexOf(copy) + 1)
             if (next == null || next.name != "p") addBefore(body, next, newElement(W, "p"))
         }
         fun append(text: String) { text.split('\n').forEach { part ->

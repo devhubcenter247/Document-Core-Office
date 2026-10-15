@@ -5,6 +5,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import com.editor.docsdk.EditAction
+import com.editor.docsdk.EditContext
 import com.editor.docsdk.EditRequest
 import com.editor.docsdk.EditFeature
 import com.editor.docsdk.ShapeItem
@@ -23,6 +24,7 @@ import com.wxiwei.office.editor.slide.SlideGeometry
 import com.wxiwei.office.pg.control.Presentation
 import com.wxiwei.office.reader.OfficeDocumentView
 import com.wxiwei.office.system.IMainFrame
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 /**
@@ -37,6 +39,14 @@ class SlideEditPanel @JvmOverloads constructor(
     // edits that needed a reopen (slides added, moved...); Save writes it over the original
     private var working = file
     private var workingChanged = false
+
+    /** The document at some point (a file in the cache) and the slide shown then. */
+    private class Point(val file: File, val slide: Int)
+    // slide changes reopen the document with a new session, which starts without history: they are
+    // undone by going back to the document as it was before them (edits made in one session before
+    // a slide change go back together)
+    private val undoPoints = ArrayList<Point>()
+    private val redoPoints = ArrayList<Point>()
     private var session = LivePptxSession(reader.control!!, file)
     private var shapeId = -1
     // position of the selected shape including moves not saved yet (listShapes reads the file)
@@ -46,9 +56,9 @@ class SlideEditPanel @JvmOverloads constructor(
 
     override val tabs = listOf(
         Tab(R.string.docsdk_edit_tab_home, listOf(EditAction.BOLD, EditAction.ITALIC, EditAction.UNDERLINE, EditAction.TEXT_COLOR,
-            EditAction.FONT_SIZE, EditAction.ALIGN_LEFT, EditAction.ALIGN_CENTER, EditAction.ALIGN_RIGHT, EditAction.SET_TEXT)),
+            EditAction.FONT, EditAction.FONT_SIZE, EditAction.ALIGN_LEFT, EditAction.ALIGN_CENTER, EditAction.ALIGN_RIGHT, EditAction.SET_TEXT)),
         Tab(R.string.docsdk_edit_tab_insert, listOf(EditAction.ADD_TEXT_BOX, EditAction.INSERT_PICTURE, EditAction.ADD_SHAPE)),
-        Tab(R.string.docsdk_edit_tab_arrange, listOf(EditAction.SHAPE_LIST, EditAction.MOVE_LEFT, EditAction.MOVE_RIGHT, EditAction.MOVE_UP,
+        Tab(R.string.docsdk_edit_tab_arrange, listOf(EditAction.COPY, EditAction.CUT, EditAction.PASTE, EditAction.SHAPE_LIST, EditAction.MOVE_LEFT, EditAction.MOVE_RIGHT, EditAction.MOVE_UP,
             EditAction.MOVE_DOWN, EditAction.ROTATE, EditAction.DELETE)),
         Tab(R.string.docsdk_edit_tab_slides, listOf(EditAction.ADD_SLIDE, EditAction.DUPLICATE_SLIDE, EditAction.SLIDE_UP, EditAction.SLIDE_DOWN,
             EditAction.DELETE_SLIDE, EditAction.TRANSITION, EditAction.ANIMATIONS, EditAction.EXPORT_PNG, EditAction.EXPORT_PDF)),
@@ -58,14 +68,31 @@ class SlideEditPanel @JvmOverloads constructor(
 
     init {
         status = str(R.string.docsdk_edit_slide_hint)
-        action(EditAction.UNDO, EditFeature.UNDO_REDO) { if (!session.undo()) toast(str(R.string.docsdk_edit_nothing_to_undo)) else afterUndo() }
-        action(EditAction.REDO, EditFeature.UNDO_REDO) { if (!session.redo()) toast(str(R.string.docsdk_edit_nothing_to_redo)) else afterUndo() }
+        action(EditAction.UNDO, EditFeature.UNDO_REDO) {
+            when {
+                session.canUndo() -> if (session.undo()) afterUndo() else toast(str(R.string.docsdk_edit_nothing_to_undo))
+                undoPoints.isNotEmpty() -> goTo(undoPoints, redoPoints)
+                else -> toast(str(R.string.docsdk_edit_nothing_to_undo))
+            }
+        }
+        action(EditAction.REDO, EditFeature.UNDO_REDO) {
+            when {
+                session.canRedo() -> if (session.redo()) afterUndo() else toast(str(R.string.docsdk_edit_nothing_to_redo))
+                canRedoPoint() -> goTo(redoPoints, undoPoints)
+                else -> toast(str(R.string.docsdk_edit_nothing_to_redo))
+            }
+        }
         action(EditAction.SAVE) { save() }
         action(EditAction.SAVE_COPY, EditFeature.SAVE_COPY) { stopInline(commit = true); saveCopy() }
         action(EditAction.BOLD, EditFeature.FORMAT) { toggle { TextFormat(bold = it.bold != true) } }
         action(EditAction.ITALIC, EditFeature.FORMAT) { toggle { TextFormat(italic = it.italic != true) } }
         action(EditAction.UNDERLINE, EditFeature.FORMAT) { toggle { TextFormat(underline = it.underline != true) } }
         action(EditAction.TEXT_COLOR, EditFeature.FORMAT) { pickColor(str(R.string.docsdk_edit_text_color)) { c -> c?.let { format(TextFormat(rgbHex = it)) } } }
+        action(EditAction.FONT, EditFeature.FORMAT) {
+            if (shapeId < 0) return@action toast(str(R.string.docsdk_edit_select_shape_first))
+            val current = runCatching { session.textFormatAt(slide(), shapeId, inlineRange()?.first ?: 0) }.getOrNull()?.font
+            pickFont(EditFonts.names, current) { name -> format(TextFormat(font = name)) }
+        }
         action(EditAction.FONT_SIZE, EditFeature.FORMAT) { pickSize { format(TextFormat(sizePt = it)) } }
         action(EditAction.ALIGN_LEFT, EditFeature.FORMAT) { format(TextFormat(align = "l")) }
         action(EditAction.ALIGN_CENTER, EditFeature.FORMAT) { format(TextFormat(align = "ctr")) }
@@ -81,20 +108,34 @@ class SlideEditPanel @JvmOverloads constructor(
         action(EditAction.MOVE_DOWN, EditFeature.SHAPES) { move(0, 1) }
         action(EditAction.ROTATE, EditFeature.SHAPES) { if (shapeId < 0) toast(str(R.string.docsdk_edit_select_shape_first)) else rotate((overlay.shapeRotation + 90f) % 360f) }
         action(EditAction.DELETE, EditFeature.SHAPES) { delete() }
+        action(EditAction.COPY, EditFeature.CLIPBOARD) { copyShape() }
+        action(EditAction.CUT, EditFeature.CLIPBOARD, EditFeature.SHAPES) { if (copyShape()) delete() }
+        action(EditAction.PASTE, EditFeature.CLIPBOARD, EditFeature.SHAPES) { pasteShape() }
         action(EditAction.ANIMATIONS, EditFeature.ANIMATIONS) { editEffects() }
         action(EditAction.TRANSITION, EditFeature.ANIMATIONS) { editTransition() }
         action(EditAction.ADD_SLIDE, EditFeature.SLIDES) { slideOp(R.string.docsdk_edit_slide_add_failed, { it + 1 }) { session.addBlankSlide(slide()) } }
         action(EditAction.DUPLICATE_SLIDE, EditFeature.SLIDES) { slideOp(R.string.docsdk_edit_slide_duplicate_failed, { it + 1 }) { session.duplicateSlide(slide()) } }
         action(EditAction.SLIDE_UP, EditFeature.SLIDES) { slideOp(R.string.docsdk_edit_slide_move_failed, { it - 1 }) { slide() > 0 && session.moveSlide(slide(), slide() - 1) } }
         action(EditAction.SLIDE_DOWN, EditFeature.SLIDES) { slideOp(R.string.docsdk_edit_slide_move_failed, { it + 1 }) { slide() < session.slideCount() - 1 && session.moveSlide(slide(), slide() + 1) } }
-        action(EditAction.DELETE_SLIDE, EditFeature.SLIDES) { slideOp(R.string.docsdk_edit_slide_delete_failed, { it - 1 }) { session.deleteSlide(slide()) } }
+        action(EditAction.DELETE_SLIDE, EditFeature.SLIDES) {
+            // a presentation keeps at least one slide
+            if (session.slideCount() <= 1) return@action toast(str(R.string.docsdk_edit_slide_delete_last))
+            slideOp(R.string.docsdk_edit_slide_delete_failed, { it - 1 }) { session.deleteSlide(slide()) }
+        }
         action(EditAction.EXPORT_PNG, EditFeature.EXPORT) { exportSlide(pdf = false) }
         action(EditAction.EXPORT_PDF, EditFeature.EXPORT) { exportSlide(pdf = true) }
     }
 
+    override fun canUndo() = session.canUndo() || undoPoints.isNotEmpty()
+    override fun canRedo() = session.canRedo() || canRedoPoint()
+
+    // an edit made after going back to a point replaces what was undone
+    private fun canRedoPoint() = redoPoints.isNotEmpty() && !session.canUndo()
+
     override fun isActive(action: EditAction): Boolean {
         if (shapeId < 0) return false
-        val f = runCatching { session.textFormatOf(slide(), shapeId) }.getOrNull() ?: return false
+        // the part selected while typing in the box, or else its whole text
+        val f = runCatching { session.textFormatAt(slide(), shapeId, inlineRange()?.first ?: 0) }.getOrNull() ?: return false
         return when (action) {
             EditAction.BOLD -> f.bold == true
             EditAction.ITALIC -> f.italic == true
@@ -104,11 +145,16 @@ class SlideEditPanel @JvmOverloads constructor(
     }
 
     init {
+        EditFonts.register()
         addOverlay(overlay)
         keepAboveKeyboard(true)
         reader.onDocumentGesture = gesture@{ type, event ->
-            if (type != IMainFrame.ON_SINGLE_TAP_CONFIRMED) return@gesture false
-            tapAt(event.rawX, event.rawY) || shapeId >= 0
+            when (type) {
+                IMainFrame.ON_SINGLE_TAP_CONFIRMED -> tapAt(event.rawX, event.rawY) || shapeId >= 0
+                // a double tap never confirms its first tap: it selects a text shape and edits it at once
+                IMainFrame.ON_DOUBLE_TAP -> editAt(event.rawX, event.rawY)
+                else -> false
+            }
         }
         overlay.onTap = { x, y -> tapAt(x, y) }
         overlay.movable = has(EditFeature.SHAPES)
@@ -122,48 +168,23 @@ class SlideEditPanel @JvmOverloads constructor(
 
     private fun startInline(s: PptxShapeInfo) {
         stopInline(commit = true)
-        val edit = EditText(context).apply {
+        val edit = object : EditText(context) {
+            // the format bar and the app's own buttons follow the selection
+            override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+                super.onSelectionChanged(selStart, selEnd)
+                if (inline === this) inlineSelectionChanged()
+            }
+        }.apply {
             setText(s.text)
             setSelection(text.length)
             textSize = 16f
             setTextColor(0xFF111111.toInt())
             setBackgroundColor(0xF0FFFFFF.toInt())
-            // the shape's own look, at the slide's zoom (points at 96 dpi, then the view zoom)
-            val p = docView() as? Presentation
-            session.textStyle(slide(), s.id)?.let { st ->
-                val zoom = p?.getZoom() ?: 1f
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (st.sizePt * 96f / 72f * zoom).coerceIn(dp(12).toFloat(), dp(48).toFloat()))
-                typeface = st.typeface
-                val c = st.color or 0xFF000000.toInt()
-                // light text keeps a dark backdrop so it stays readable
-                val light = android.graphics.Color.luminance(c) > 0.6f
-                setTextColor(c)
-                setBackgroundColor(if (light) 0xE0303030.toInt() else 0xF0FFFFFF.toInt())
-            }
             setPadding(dp(6), dp(4), dp(6), dp(4))
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
-        // formatting of the selected part of the text, from the text selection menu
-        edit.customSelectionActionModeCallback = object : android.view.ActionMode.Callback {
-            private val formats = if (!has(EditFeature.FORMAT)) emptyList() else listOf(
-                str(R.string.docsdk_edit_bold) to TextFormat(bold = true), str(R.string.docsdk_edit_italic) to TextFormat(italic = true),
-                str(R.string.docsdk_edit_underline) to TextFormat(underline = true), str(R.string.docsdk_edit_red_text) to TextFormat(rgbHex = "C00000"))
-            override fun onCreateActionMode(mode: android.view.ActionMode, menu: android.view.Menu): Boolean {
-                formats.forEachIndexed { i, (label, _) -> menu.add(android.view.Menu.NONE, FORMAT_MENU_ID + i, 100 + i, label) }
-                return true
-            }
-            override fun onPrepareActionMode(mode: android.view.ActionMode, menu: android.view.Menu) = false
-            override fun onActionItemClicked(mode: android.view.ActionMode, item: android.view.MenuItem): Boolean {
-                val format = formats.getOrNull(item.itemId - FORMAT_MENU_ID)?.second ?: return false
-                val start = minOf(edit.selectionStart, edit.selectionEnd)
-                val end = maxOf(edit.selectionStart, edit.selectionEnd)
-                mode.finish()
-                formatRange(start, end, format)
-                return true
-            }
-            override fun onDestroyActionMode(mode: android.view.ActionMode) {}
-        }
+        styleInline(edit, s.id)
         inline = edit
         // the keyboard takes half the screen: give the slide the rest while typing on it
         toolbar?.visibility = View.GONE
@@ -172,18 +193,167 @@ class SlideEditPanel @JvmOverloads constructor(
         edit.requestFocus()
         (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
             .showSoftInput(edit, 0)
+        inlineSelectionChanged()
     }
 
-    /** Saves the text being edited in place, then formats its chars [start, end) and shows the slide. */
-    private fun formatRange(start: Int, end: Int, format: TextFormat) {
-        if (shapeId < 0 || end <= start) return
-        // positions are in the edited text: write it to the shape first
-        stopInline(commit = true)
-        if (!session.setTextFormat(slide(), shapeId, start, end, format)) toast(session.lastError?.message ?: str(R.string.docsdk_edit_format_failed))
-        else reopenHint()
+    /**
+     * The shape's own look in the editor, at the slide's zoom (points at 96 dpi, then the view zoom):
+     * the first run's for the whole text, then each run as drawn on the slide (a word made bold, red
+     * or in another font); spans of earlier runs are taken off first.
+     */
+    private fun styleInline(edit: EditText, id: Int) {
+        val text = edit.editableText
+        for (span in text.getSpans(0, text.length, Any::class.java)) {
+            val ours = span is android.text.style.ForegroundColorSpan || span is TypefaceSpan || span is android.text.style.RelativeSizeSpan || span is FakeStyleSpan ||
+                (span is android.text.style.UnderlineSpan && text.getSpanFlags(span) and android.text.Spanned.SPAN_COMPOSING == 0)
+            if (ours) text.removeSpan(span)
+        }
+        val st = session.textStyle(slide(), id) ?: return
+        val zoom = (docView() as? Presentation)?.getZoom() ?: 1f
+        edit.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (st.sizePt * 96f / 72f * zoom).coerceIn(dp(12).toFloat(), dp(48).toFloat()))
+        edit.typeface = st.typeface
+        val c = st.color or 0xFF000000.toInt()
+        val runs = session.textRuns(slide(), id)
+        // light text keeps a dark backdrop so it stays readable: the color of most of the text decides
+        val most = runs.groupBy { it.second.color }.maxByOrNull { (_, r) -> r.sumOf { it.first.last - it.first.first + 1 } }?.key ?: c
+        val light = android.graphics.Color.luminance(most or 0xFF000000.toInt()) > 0.6f
+        edit.setTextColor(c)
+        edit.setBackgroundColor(if (light) 0xE0303030.toInt() else 0xF0FFFFFF.toInt())
+        for ((range, run) in runs) {
+            val a = range.first.coerceAtMost(text.length); val b = (range.last + 1).coerceAtMost(text.length)
+            if (b <= a) continue
+            val flags = android.text.Spanned.SPAN_EXCLUSIVE_INCLUSIVE
+            if (run.color != st.color) text.setSpan(android.text.style.ForegroundColorSpan(run.color or 0xFF000000.toInt()), a, b, flags)
+            if (run.typeface != st.typeface) text.setSpan(TypefaceSpan(run.typeface), a, b, flags)
+            if (run.underline) text.setSpan(android.text.style.UnderlineSpan(), a, b, flags)
+            if (run.fake != 0) text.setSpan(FakeStyleSpan(run.fake), a, b, flags)
+            if (run.sizePt != st.sizePt && st.sizePt > 0f) text.setSpan(android.text.style.RelativeSizeSpan(run.sizePt / st.sizePt), a, b, flags)
+        }
     }
 
-    /** Keeps the editor on the shape frame, at least a few lines tall. */
+    /** Bold / italic the run's font cannot draw (Typeface.BOLD / ITALIC bits), faked on the paint like the slide does. */
+    private class FakeStyleSpan(private val fake: Int) : android.text.style.MetricAffectingSpan() {
+        override fun updateDrawState(tp: android.text.TextPaint) = updateMeasureState(tp)
+        override fun updateMeasureState(tp: android.text.TextPaint) {
+            if (fake and android.graphics.Typeface.BOLD != 0) tp.isFakeBoldText = true
+            if (fake and android.graphics.Typeface.ITALIC != 0) tp.textSkewX = com.wxiwei.office.simpletext.font.FontTypefaceManage.FAKE_ITALIC_SKEW
+        }
+    }
+
+    // ---- the format bar over the keyboard ----
+
+    /**
+     * Shows the format bar over the keyboard while text is typed in a shape (true by default). Off:
+     * build your own from [com.editor.docsdk.DocumentEditor.Listener.onStateChanged] (called as the
+     * selection changes), [textSelection], [isActive] and [formatText] or the format commands.
+     */
+    var textBar: Boolean = true
+
+    /** The buttons of the format bar, in order; FONT shows the font, FONT_SIZE shows − size +. */
+    var textBarActions: List<EditAction> = listOf(EditAction.BOLD, EditAction.ITALIC, EditAction.UNDERLINE, EditAction.TEXT_COLOR,
+        EditAction.FONT, EditAction.FONT_SIZE, EditAction.ALIGN_LEFT, EditAction.ALIGN_CENTER, EditAction.ALIGN_RIGHT)
+
+    override val editContext: EditContext?
+        get() = when {
+            shapeId < 0 -> null
+            inline != null -> if (textBar) EditContext.SHAPE_TEXT else null
+            else -> EditContext.SHAPE
+        }
+
+    override fun defaultActions(context: EditContext): List<EditAction> = when (context) {
+        EditContext.SHAPE_TEXT -> textBarActions
+        EditContext.SHAPE -> listOf(EditAction.CUT, EditAction.COPY, EditAction.PASTE, EditAction.DELETE, EditAction.ROTATE) +
+            // a shape with text: its whole text formatted at once
+            if (shapeText.isEmpty()) emptyList() else listOf(EditAction.BOLD, EditAction.ITALIC, EditAction.UNDERLINE,
+                EditAction.TEXT_COLOR, EditAction.FONT_SIZE, EditAction.ALIGN_LEFT, EditAction.ALIGN_CENTER, EditAction.ALIGN_RIGHT)
+        else -> emptyList()
+    }
+
+    override fun canRun(action: EditAction): Boolean = when (action) {
+        EditAction.PASTE -> canPaste
+        EditAction.CUT, EditAction.COPY, EditAction.DELETE, EditAction.ROTATE -> shapeId >= 0
+        else -> true
+    }
+
+    internal override fun barState(): ContextBar.State {
+        if (shapeId < 0) return ContextBar.State()
+        val at = inlineRange()?.first ?: 0
+        val f = runCatching { session.textFormatAt(slide(), shapeId, at) }.getOrNull()
+        val run = session.textRuns(slide(), shapeId).firstOrNull { at in it.first }?.second ?: session.textStyle(slide(), shapeId)
+        return ContextBar.State(font = f?.font, sizePt = run?.sizePt, color = run?.color)
+    }
+
+    /** The selection in the editor moved: light the bar's buttons and tell the app. */
+    private fun inlineSelectionChanged() = stateChanged()
+
+    /** What the format commands act on while typing: the selected part, or the word at the caret; null for all the text. */
+    private fun inlineRange(): IntRange? {
+        textSelection()?.let { return it }
+        val edit = inline ?: return null
+        val text = edit.text
+        val at = edit.selectionStart.coerceIn(0, text.length)
+        var a = at; var b = at
+        while (a > 0 && text[a - 1].isLetterOrDigit()) a--
+        while (b < text.length && text[b].isLetterOrDigit()) b++
+        return if (b > a) a until b else null
+    }
+
+    /**
+     * Formats chars [start, end) of the selected shape's text with [make] (given the format there
+     * now). While the text is typed in place, what was typed is written to the shape first and the
+     * editor stays open (keyboard, selection) with the new look.
+     */
+    private fun formatRange(start: Int, end: Int, make: (TextFormat) -> TextFormat): Boolean {
+        if (shapeId < 0 || start < 0 || end <= start) return false
+        val edit = inline
+        if (edit != null) {
+            // positions are in the edited text: write it to the shape first
+            val value = edit.text.toString()
+            if (value != shapeText) {
+                if (!session.setShapeText(slide(), shapeId, value)) {
+                    toast(session.lastError?.message ?: str(R.string.docsdk_edit_text_change_failed))
+                    return false
+                }
+                shapeText = value
+            }
+        }
+        if (end > shapeText.length) return false
+        val format = make(session.textFormatAt(slide(), shapeId, start) ?: TextFormat())
+        if (!session.setTextFormat(slide(), shapeId, start, end, format)) {
+            toast(session.lastError?.message ?: str(R.string.docsdk_edit_format_failed))
+            return false
+        }
+        if (edit != null && !session.needsReopen) {
+            styleInline(edit, shapeId)
+            // what was formatted stays selected, for another format
+            if (minOf(edit.selectionStart, edit.selectionEnd) != start || maxOf(edit.selectionStart, edit.selectionEnd) != end)
+                edit.setSelection(start, end.coerceAtMost(edit.text.length))
+            reader.invalidateThumbnail(slide() + 1)
+            inlineSelectionChanged()
+        } else {
+            // not shown live (a shape in a group): the document opens again
+            stopInline(commit = false)
+            reopenHint()
+            stateChanged()
+        }
+        return true
+    }
+
+    /** The part of the text selected in the in-place editor, or null. */
+    fun textSelection(): IntRange? {
+        val edit = inline ?: return null
+        val a = minOf(edit.selectionStart, edit.selectionEnd)
+        val b = maxOf(edit.selectionStart, edit.selectionEnd)
+        return if (a in 0 until b) a until b else null
+    }
+
+    /** The selected shape's text, as being typed while its in-place editor is open; null without a shape. */
+    fun selectedText(): String? = if (shapeId < 0) null else inline?.text?.toString() ?: shapeText
+
+    /** Formats chars [start, end) of the selected shape's text (positions as in [selectedText]); false when it could not. */
+    fun formatText(start: Int, end: Int, format: TextFormat): Boolean = !isBusy && formatRange(start, end) { format }
+
+    /** Keeps the editor on the shape frame, at least a few lines tall, above the format bar. */
     private fun placeInline(frame: android.graphics.RectF?) {
         val edit = inline ?: return
         if (frame == null) { edit.visibility = View.INVISIBLE; return }
@@ -192,7 +362,7 @@ class SlideEditPanel @JvmOverloads constructor(
         val w = maxOf(frame.width().toInt(), dp(160)).coerceAtMost(reader.width)
         val h = maxOf(frame.height().toInt(), dp(96))
         val left = frame.left.toInt().coerceIn(0, maxOf(0, reader.width - w))
-        // above the bar and the keyboard when the shape is under them
+        // above the bars and the keyboard when the shape is under them
         val top = minOf(frame.top.toInt(), visibleBottom(reader) - h - dp(8)).coerceAtLeast(0)
         if (lp.width != w || lp.height != h || lp.leftMargin != left || lp.topMargin != top) {
             lp.width = w; lp.height = h; lp.leftMargin = left; lp.topMargin = top
@@ -216,15 +386,32 @@ class SlideEditPanel @JvmOverloads constructor(
                 reopenHint()
             }
         }
+        stateChanged()
+    }
+
+    /** The top shape under a screen point, or null. */
+    private fun shapeAt(rawX: Float, rawY: Float): PptxShapeInfo? {
+        val p = docView() as? Presentation ?: return null
+        val origin = IntArray(2)
+        p.getLocationOnScreen(origin)
+        val point = SlideGeometry.viewToEmu(p, rawX - origin[0], rawY - origin[1]) ?: return null
+        // a fingertip's reach around small boxes (a one-line title at a small zoom)
+        val slop = SlideGeometry.emuPerPixel(p)?.let { (it * dp(12)).toLong() } ?: 0L
+        return SlideGeometry.pick(session.listShapes(slide()), point, slop)
+    }
+
+    /** Selects the text shape under a screen point and edits its text in place; false when there is none. */
+    private fun editAt(rawX: Float, rawY: Float): Boolean {
+        val hit = shapeAt(rawX, rawY)?.takeIf { it.kind == ShapeKind.TEXT && has(EditFeature.TEXT) } ?: return false
+        stopInline(commit = true)
+        select(hit)
+        startInline(hit)
+        return true
     }
 
     /** Selects the top shape under a screen point, or clears the selection. */
     private fun tapAt(rawX: Float, rawY: Float): Boolean {
-        val p = docView() as? Presentation ?: return false
-        val origin = IntArray(2)
-        p.getLocationOnScreen(origin)
-        val point = SlideGeometry.viewToEmu(p, rawX - origin[0], rawY - origin[1])
-        val hit = point?.let { SlideGeometry.hitTest(session.listShapes(slide()), it) }
+        val hit = shapeAt(rawX, rawY)
         val editing = inline != null
         stopInline(commit = true)
         // a second tap on the selected text shape edits its text in place
@@ -243,6 +430,9 @@ class SlideEditPanel @JvmOverloads constructor(
     override fun close() {
         stopInline(commit = true)
         super.close()
+        val points = undoPoints + redoPoints
+        undoPoints.clear(); redoPoints.clear()
+        points.forEach { drop(it.file) }
         reader.onDocumentGesture = null
         removeOverlay(overlay)
     }
@@ -272,6 +462,7 @@ class SlideEditPanel @JvmOverloads constructor(
         overlay.selection = rect
         status = s?.let { describe(it) } ?: str(R.string.docsdk_edit_no_shape_selected)
         shapeText = s?.text ?: ""
+        stateChanged()
     }
 
     private fun slide(): Int = (reader.state.value.pageNumber - 1).coerceAtLeast(0)
@@ -482,11 +673,14 @@ class SlideEditPanel @JvmOverloads constructor(
     /** B/I/U turn off when the shape's text already has them. */
     private fun toggle(next: (TextFormat) -> TextFormat) {
         if (shapeId < 0) return toast(str(R.string.docsdk_edit_select_shape_first))
+        if (inline != null) inlineRange()?.let { r -> formatRange(r.first, r.last + 1, next); return }
         format(next(session.textFormatOf(slide(), shapeId) ?: TextFormat()))
     }
 
+    /** [f] on the part selected while typing in the shape, or else on all its text. */
     private fun format(f: TextFormat) {
         if (shapeId < 0) return toast(str(R.string.docsdk_edit_select_shape_first))
+        if (inline != null) inlineRange()?.let { r -> formatRange(r.first, r.last + 1) { f }; return }
         if (!session.setTextFormat(slide(), shapeId, f)) toast(session.lastError?.message ?: str(R.string.docsdk_edit_shape_no_text))
         else reopenHint()
     }
@@ -603,8 +797,35 @@ class SlideEditPanel @JvmOverloads constructor(
     private fun slideOp(failed: Int, show: (Int) -> Int = { it }, op: () -> Boolean) {
         stopInline(commit = true)
         val at = slide()
-        if (!op()) return toast(session.lastError?.message ?: str(failed))
+        // the document before the change: the opened file, or with this session's edits written out
+        val start = if (session.canUndo()) keep(working) else null
+        val before = if (start == null) keep(working) else workingCopy().takeIf { session.copyTo(it) is EditResult.Ok }
+        if (!op()) {
+            listOfNotNull(start, before).forEach { drop(it) }
+            return toast(session.lastError?.message ?: str(failed))
+        }
+        start?.let { undoPoints += Point(it, at) }
+        before?.let { undoPoints += Point(it, at) }
+        redoPoints.toList().also { redoPoints.clear() }.forEach { drop(it.file) }
         reloadWorking(show(at).coerceIn(0, maxOf(0, session.slideCount() - 1)))
+    }
+
+    /** [f] kept as an undo point: the original is copied, Save writes over it. */
+    private fun keep(f: File): File = if (f != file) f else workingCopy().also { file.copyTo(it, overwrite = true) }
+
+    /** Deletes [f] unless it is still shown, the original, or an undo/redo point. */
+    private fun drop(f: File) {
+        if (f == working || f == file || (undoPoints + redoPoints).any { it.file == f }) return
+        f.delete()
+    }
+
+    /** Undo or redo of a slide change: back to the last point of [from]; the document now goes to [to]. */
+    private fun goTo(from: MutableList<Point>, to: MutableList<Point>) {
+        stopInline(commit = true)
+        val point = from.removeAt(from.lastIndex)
+        // no edit since the document was opened (see canRedoPoint), so the opened file is the state now
+        to += Point(keep(working), slide())
+        show(point.file, point.slide.coerceAtLeast(0))
     }
 
     /**
@@ -616,14 +837,83 @@ class SlideEditPanel @JvmOverloads constructor(
         val next = workingCopy()
         val result = session.save(next)
         if (result !is EditResult.Ok) return report(result, "")
+        show(next, slideIndex)
+    }
+
+    /** Shows [next], a working copy, at [slideIndex], with a new session on it. */
+    private fun show(next: File, slideIndex: Int) {
+        select(null)
+        val pick = pendingSelect
+        pendingSelect = -1
         val previous = working
         working = next
         workingChanged = true
         reopen(next) {
             session = LivePptxSession(reader.control!!, next)
-            if (previous != file) previous.delete()
+            drop(previous)
+            // the slides are read in the background and a jump past those read yet is dropped
+            kotlinx.coroutines.withTimeoutOrNull(10_000) { reader.state.first { it.pageNumber >= 1 && it.pageCount > slideIndex } }
             (docView() as? Presentation)?.showSlide(slideIndex, false)
-            reader.invalidateThumbnail(slideIndex + 1)
+            // the viewer reports the slide once it draws it
+            kotlinx.coroutines.withTimeoutOrNull(2_000) { reader.state.first { it.pageNumber == slideIndex + 1 } }
+            // slides were added, removed or reordered: every thumbnail may show another slide now
+            reader.invalidateThumbnails()
+            // a pasted shape is selected, ready to move, once the slide's page is laid out to frame it
+            if (pick >= 0) session.listShapes(slideIndex).firstOrNull { it.id == pick }?.let { pasted ->
+                kotlinx.coroutines.withTimeoutOrNull(3_000) {
+                    while ((docView() as? Presentation)?.let { SlideGeometry.emuToView(it, pasted.rectEmu) } == null) kotlinx.coroutines.delay(50)
+                }
+                select(pasted)
+            }
+        }
+    }
+
+    // ---- copy and paste of shapes ----
+
+    private val clipboard get() = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+
+    /** The shape last copied here, the text put on the clipboard for it, and the slide it came from. */
+    private var shapeClip: com.wxiwei.office.editor.pptx.PptxEditor.ShapeClip? = null
+    private var shapeClipText = ""
+    private var shapeClipSlide = -1
+    // the shape to select once the document is shown again (a pasted one)
+    private var pendingSelect = -1
+
+    /** Copies the selected shape (text box, picture, shape, table, group); other apps get its text. False when nothing was. */
+    private fun copyShape(): Boolean {
+        inline?.let { it.onTextContextMenuItem(android.R.id.copy); return true }
+        if (shapeId < 0) { toast(str(R.string.docsdk_edit_select_shape_first)); return false }
+        val clip = session.copyShape(slide(), shapeId) ?: run {
+            toast(session.lastError?.message ?: str(R.string.docsdk_edit_failed)); return false
+        }
+        shapeClip = clip
+        shapeClipSlide = slide()
+        // other apps get the shape's text; a shape without text still needs something to match on paste
+        shapeClipText = clip.text.ifEmpty { str(R.string.docsdk_edit_shape_copied, shapeId) }
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("shape", shapeClipText))
+        toast(str(R.string.docsdk_edit_copied))
+        return true
+    }
+
+    /**
+     * Pastes the copied shape on this slide (a little lower and to the right on the slide it came
+     * from, so it does not hide the original) and selects it; text from another app becomes a new
+     * text box. Shown by reopening the document, undone like slide changes.
+     */
+    private fun pasteShape() {
+        inline?.let { it.onTextContextMenuItem(android.R.id.paste); return }
+        val text = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+        if (text.isNullOrEmpty()) return toast(str(R.string.docsdk_edit_clipboard_empty))
+        val clip = shapeClip?.takeIf { text == shapeClipText }
+        if (clip == null) {
+            if (!has(EditFeature.SHAPES)) return
+            run(EditAction.ADD_TEXT_BOX, text, true)
+            return
+        }
+        val size = session.slideSizeEmu()
+        val step = if (slide() == shapeClipSlide) maxOf(size.width, size.height) / 40 else 0L
+        slideOp(R.string.docsdk_edit_paste_failed) {
+            session.pasteShape(slide(), clip, step, step).also { if (it) pendingSelect = session.pastedShape }
         }
     }
 
@@ -647,15 +937,20 @@ class SlideEditPanel @JvmOverloads constructor(
     override fun onSaved() {
         select(null)
         // the view already shows what was saved; edit the original from now on
-        if (working != file) working.delete()
+        val previous = working
         working = file
+        drop(previous)
         workingChanged = false
         session = LivePptxSession(reader.control!!, file)
     }
 
+    /** Draws its text with [typeface] (TypefaceSpan(Typeface) needs API 28). */
+    private class TypefaceSpan(private val typeface: android.graphics.Typeface) : android.text.style.MetricAffectingSpan() {
+        override fun updateDrawState(paint: android.text.TextPaint) { paint.typeface = typeface }
+        override fun updateMeasureState(paint: android.text.TextPaint) { paint.typeface = typeface }
+    }
+
     private companion object {
-        // ids of the formatting items added to the text selection menu
-        const val FORMAT_MENU_ID = 0x5E10
         val TRANSITION_TYPES = setOf("none", "fade", "push", "wipe", "cover", "pull", "split", "zoom", "cut")
     }
 }

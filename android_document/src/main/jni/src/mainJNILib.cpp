@@ -1731,8 +1731,15 @@ JNI_FUNC(jboolean, PdfiumCore, nativeAddInvisibleWords)(JNI_ARGS, jlong docPtr, 
         FPDF_PAGEOBJECT obj = FPDFPageObj_CreateTextObj(doc->pdfDocument, font, across);
         if (!obj) continue;
         float l, b, r, t;
-        if (!FPDFText_SetText(obj, value.data()) || !FPDFTextObj_SetTextRenderMode(obj, FPDF_TEXTRENDERMODE_INVISIBLE) ||
-            !FPDFPageObj_GetBounds(obj, &l, &b, &r, &t) || !(r > l)) {
+        // a word with a space after it (the next word follows on the line): the word alone is
+        // fitted to its box, the space runs on into the gap after it
+        size_t len = value.size();
+        while (len > 0 && value[len - 1] == 0) --len;
+        bool spaced = len > 1 && value[len - 1] == ' ';
+        std::vector<unsigned short> bare(value.begin(), value.begin() + len - (spaced ? 1 : 0));
+        bare.push_back(0);
+        if (!FPDFText_SetText(obj, bare.data()) || !FPDFTextObj_SetTextRenderMode(obj, FPDF_TEXTRENDERMODE_INVISIBLE) ||
+            !FPDFPageObj_GetBounds(obj, &l, &b, &r, &t) || !(r > l) || (spaced && !FPDFText_SetText(obj, value.data()))) {
             FPDFPageObj_Destroy(obj);
             continue;
         }

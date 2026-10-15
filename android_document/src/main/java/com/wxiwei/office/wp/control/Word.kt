@@ -5,6 +5,8 @@
  * The modifications are proprietary to dongb2002. The original copyright and license notice
  * of this file, where present below, remains in effect for the original portions.
  */
+@file:Suppress("DEPRECATION", "REDUNDANT_CAST", "USELESS_ELVIS")
+
 package com.wxiwei.office.wp.control
 
 import com.wxiwei.office.constant.wp.WPModelConstant
@@ -630,7 +632,7 @@ class Word : LinearLayout, IWord {
         val canvas = Canvas(bitmap)
         canvas.translate(-view.getX().toFloat(), -view.getY().toFloat())
         canvas.drawColor(Color.WHITE)
-        (view as PageView).draw(canvas, 0, 0, 1f)
+        view.draw(canvas, 0, 0, 1f)
         return bitmap
     }
 
@@ -673,7 +675,7 @@ class Word : LinearLayout, IWord {
         ) {
             return false
         }
-        val view = pageRoot.getPageView(pageNumber - 1) as? PageView ?: return false
+        val view = pageRoot.getPageView(pageNumber - 1) ?: return false
         val forced = PictureKit.instance().setForceDrawOnCurrentThread(true)
         val saved = canvas.save()
         try {
@@ -709,7 +711,7 @@ class Word : LinearLayout, IWord {
             val canvas = Canvas(bitmap)
             canvas.translate(tX, tY)
             canvas.drawColor(Color.WHITE)
-            (view as PageView).draw(canvas, 0, 0, paintZoom)
+            view.draw(canvas, 0, 0, paintZoom)
             PictureKit.instance().isDrawPictrue = b
             return bitmap
         }

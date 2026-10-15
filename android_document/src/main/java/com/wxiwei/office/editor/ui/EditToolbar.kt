@@ -170,6 +170,7 @@ class EditToolbar(private val panel: OfficeEditPanel) {
     /** Buttons whose command is on (bold text selected...) get a tinted background. */
     private fun refresh() {
         for ((action, v) in items) {
+            v.alpha = if (panel.isEnabled(action)) 1f else 0.4f
             val on = panel.isActive(action)
             if (v.isSelected == on) continue
             v.isSelected = on

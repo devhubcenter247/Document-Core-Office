@@ -17,6 +17,19 @@
 -keep public class com.wxiwei.office.editor.pptx.SlideScript { public protected *; }
 -keep public class com.wxiwei.office.editor.pptx.SlideEffect { public protected *; }
 -keep public class com.wxiwei.office.editor.pptx.SlideEffect$* { public protected *; }
+# playing a slideshow: the transition and links of a SlideScript, the script of a file that is only
+# read, and the layers PageThumbnails.slideLayers draws (the slide without its animated shapes,
+# and each of those)
+-keep public class com.wxiwei.office.editor.pptx.SlideTransition { public protected *; }
+-keep public class com.wxiwei.office.editor.pptx.SlideTransition$* { public protected *; }
+-keep public class com.wxiwei.office.editor.pptx.SlideLink { public protected *; }
+# where a link is on the slide (SlideLink.rectEmu)
+-keep public class com.wxiwei.office.editor.pptx.Rect { public protected *; }
+-keep public class com.wxiwei.office.editor.pptx.PptxEditor {
+    public <init>(java.io.File);
+    public java.util.List showScript();
+}
+-keep public class com.wxiwei.office.pg.view.SlideDrawKit$Layers { public protected *; }
 -keep class kotlin.Metadata { *; }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod,Exceptions
 

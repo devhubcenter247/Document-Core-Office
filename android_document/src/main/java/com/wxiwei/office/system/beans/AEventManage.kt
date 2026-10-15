@@ -36,18 +36,15 @@ abstract class AEventManage(
     protected var midYDoublePoint = 0
     protected var mActivePointerId = -1
     protected var distance = 0f
-    protected lateinit var gesture: GestureDetector
+    protected var gesture: GestureDetector = GestureDetector(context, this, null, true)
     protected var mVelocityTracker: VelocityTracker? = null
-    protected lateinit var mScroller: Scroller
-    protected lateinit var toast: Toast
+    protected var mScroller: Scroller = Scroller(context)
+    protected var toast: Toast = Toast.makeText(context, "", Toast.LENGTH_SHORT)
 
     init {
-        gesture = GestureDetector(context, this, null, true)
-        mScroller = Scroller(context)
         val configuration = ViewConfiguration.get(context)
         mMinimumVelocity = configuration.scaledMinimumFlingVelocity
         mMaximumVelocity = configuration.scaledMaximumFlingVelocity
-        toast = Toast.makeText(context, "", 0)
     }
 
     override fun onTouch(v: View?, event: MotionEvent): Boolean {
@@ -139,21 +136,21 @@ abstract class AEventManage(
         var zoomRateChanged = false
         var dist = distance
         when (event.actionMasked) {
-            MotionEvent.ACTION_POINTER_1_DOWN -> {
+            MotionEvent.ACTION_POINTER_DOWN -> {
                 val x1 = event.getX(0)
                 val y1 = event.getY(0)
                 val x2 = event.getX(1)
                 val y2 = event.getY(1)
                 midXDoublePoint = (min(x1, x2) + abs(x1 - x2) / 2).toInt()
                 midYDoublePoint = (min(y1, y2) + abs(y1 - y2) / 2).toInt()
-                distance = (sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) / 2).toFloat()
+                distance = sqrt((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)) / 2
             }
             MotionEvent.ACTION_MOVE -> {
                 val tx1 = event.getX(0)
                 val ty1 = event.getY(0)
                 val tx2 = event.getX(1)
                 val ty2 = event.getY(1)
-                dist = (sqrt((tx1 - tx2) * (tx1 - tx2) + (ty1 - ty2) * (ty1 - ty2)) / 2).toFloat()
+                dist = sqrt((tx1 - tx2) * (tx1 - tx2) + (ty1 - ty2) * (ty1 - ty2)) / 2
                 if (abs(distance - dist) > 8) {
                     val increased = dist > distance
                     if (!(abs(zoom - fitZoom) < 0.01 && !increased && isMinZoom) && !(abs(zoom - 3.0) < 0.001 && increased)) {
@@ -180,22 +177,22 @@ abstract class AEventManage(
         return true
     }
 
-    override fun onDown(e: MotionEvent): Boolean = control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOWN)
-    override fun onShowPress(e: MotionEvent) { control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SHOW_PRESS) }
+    override fun onDown(e: MotionEvent): Boolean = control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOWN)
+    override fun onShowPress(e: MotionEvent) { control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SHOW_PRESS) }
     override fun onSingleTapUp(e: MotionEvent): Boolean {
         if (!isScroll) singleTabup = true
-        return control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SINGLE_TAP_UP)
+        return control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SINGLE_TAP_UP)
     }
     override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
         isScroll = true
-        return control!!.getMainFrame().onEventMethod(control!!.getView(), e1, e2, distanceX, distanceY, IMainFrame.ON_SCROLL)
+        return control.getMainFrame().onEventMethod(control.getView(), e1, e2, distanceX, distanceY, IMainFrame.ON_SCROLL)
     }
-    override fun onLongPress(e: MotionEvent) { control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_LONG_PRESS) }
-    override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean = control!!.getMainFrame().onEventMethod(control!!.getView(), e1, e2, velocityX, velocityY, IMainFrame.ON_FLING)
-    override fun onSingleTapConfirmed(e: MotionEvent): Boolean = control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SINGLE_TAP_CONFIRMED)
-    override fun onDoubleTap(e: MotionEvent): Boolean = control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOUBLE_TAP)
-    override fun onDoubleTapEvent(e: MotionEvent): Boolean = control!!.getMainFrame().onEventMethod(control!!.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOUBLE_TAP_EVENT)
-    override fun onClick(v: View?) { control!!.getMainFrame().onEventMethod(control!!.getView(), null, null, -1.0f, -1.0f, IMainFrame.ON_CLICK) }
+    override fun onLongPress(e: MotionEvent) { control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_LONG_PRESS) }
+    override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean = control.getMainFrame().onEventMethod(control.getView(), e1, e2, velocityX, velocityY, IMainFrame.ON_FLING)
+    override fun onSingleTapConfirmed(e: MotionEvent): Boolean = control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_SINGLE_TAP_CONFIRMED)
+    override fun onDoubleTap(e: MotionEvent): Boolean = control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOUBLE_TAP)
+    override fun onDoubleTapEvent(e: MotionEvent): Boolean = control.getMainFrame().onEventMethod(control.getView(), e, null, -1.0f, -1.0f, IMainFrame.ON_DOUBLE_TAP_EVENT)
+    override fun onClick(v: View?) { control.getMainFrame().onEventMethod(control.getView(), null, null, -1.0f, -1.0f, IMainFrame.ON_CLICK) }
 
     open fun computeScroll() {
         if (isFling && mScroller.isFinished) {
@@ -210,12 +207,8 @@ abstract class AEventManage(
     fun getMiddleXOfDoublePoint(): Int = midXDoublePoint
     fun getMiddleYOfDoublePoint(): Int = midYDoublePoint
     open fun dispose() {
-        if (::toast.isInitialized) {
-            toast.cancel()
-        }
-        if (::mScroller.isInitialized) {
-            mScroller.abortAnimation()
-        }
+        toast.cancel()
+        mScroller.abortAnimation()
         mVelocityTracker = null
     }
 }

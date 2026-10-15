@@ -432,7 +432,7 @@ class PictureManage
         control = null
         //picIndexs = null;
         //kit = null;
-        val folder = File(picTempPath)
+        val folder = picTempPath?.let(::File)
         try {
             if (picConverterMgr != null) {
                 picConverterMgr!!.dispose()
@@ -441,7 +441,7 @@ class PictureManage
             launch(object : Runnable {
                 override fun run() {
                     try {
-                        deleteTempFile(folder)
+                        if (folder != null) deleteTempFile(folder)
                     } catch (e: Exception) {
                     }
                 }
@@ -474,12 +474,12 @@ class PictureManage
             control.getSysKit().getErrorKit().writerLog(Throwable("SD Card Error"))
         } else {
             picTempPath = file.getAbsolutePath() + File.separator + "tempPic"
-            file = File(picTempPath)
+            file = File(requireNotNull(picTempPath))
             if (!file.exists()) {
                 file.mkdir()
             }
             picTempPath = file.getAbsolutePath() + File.separator + System.currentTimeMillis()
-            file = File(picTempPath)
+            file = File(requireNotNull(picTempPath))
             if (!file.exists()) {
                 file.mkdir()
             }

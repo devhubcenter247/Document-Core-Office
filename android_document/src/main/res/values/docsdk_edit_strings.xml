@@ -56,6 +56,7 @@
     <string name="docsdk_edit_column_width_failed">Could not change the column width</string>
     <string name="docsdk_edit_column_width_of">Width of column %1$s (characters)</string>
     <string name="docsdk_edit_copied">Copied</string>
+    <string name="docsdk_edit_shape_copied">Shape %1$d</string>
     <string name="docsdk_edit_copy">Copy</string>
     <string name="docsdk_edit_copy_file_name">%1$s (copy).%2$s</string>
     <string name="docsdk_edit_copy_saved">Copy saved</string>
@@ -188,7 +189,6 @@
     <string name="docsdk_edit_push">Push</string>
     <string name="docsdk_edit_range_hint">A1 or A1:C10</string>
     <string name="docsdk_edit_recent_colors">Recent</string>
-    <string name="docsdk_edit_red_text">Red text</string>
     <string name="docsdk_edit_reopen_failed">Could not reopen the document</string>
     <string name="docsdk_edit_reorder_failed">Could not change the order</string>
     <string name="docsdk_edit_replace">Replace</string>
@@ -226,6 +226,7 @@
     <string name="docsdk_edit_select_all">Select all</string>
     <string name="docsdk_edit_select_cell_first">Select a cell first</string>
     <string name="docsdk_edit_select_paragraph">Select paragraph</string>
+    <string name="docsdk_edit_select_table">Select table</string>
     <string name="docsdk_edit_select_shape_first">Select a shape first</string>
     <string name="docsdk_edit_select_shape_first_hint">Select a shape first (tap it, or use List)</string>
     <string name="docsdk_edit_select_text_first">Select text first</string>
@@ -254,6 +255,7 @@
     <string name="docsdk_edit_shown_after_save">Done; it will show after Save</string>
     <string name="docsdk_edit_slide_add_failed">Could not add the slide</string>
     <string name="docsdk_edit_slide_delete_failed">Could not delete the slide</string>
+    <string name="docsdk_edit_slide_delete_last">A presentation needs at least one slide</string>
     <string name="docsdk_edit_slide_down">Move slide down</string>
     <string name="docsdk_edit_slide_duplicate_failed">Could not duplicate the slide</string>
     <string name="docsdk_edit_slide_hint">Tap a shape on the slide to select it</string>

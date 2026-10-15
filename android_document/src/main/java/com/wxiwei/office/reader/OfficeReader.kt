@@ -37,6 +37,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -245,6 +246,15 @@ class OfficeReader(
     fun invalidateThumbnail(pageNumber: Int) {
         thumbnails?.invalidate(pageNumber) ?: return
         _thumbnailInvalidated.tryEmit(pageNumber)
+    }
+
+    /** Redraws every thumbnail: pages were added, removed or reordered. */
+    suspend fun invalidateThumbnails() {
+        for (page in 1..state.value.pageCount) {
+            invalidateThumbnail(page)
+            // let the host take each one: the buffer drops the oldest past 64
+            yield()
+        }
     }
 
     private fun canDrawPages(): Boolean = when (val view = observedView) {

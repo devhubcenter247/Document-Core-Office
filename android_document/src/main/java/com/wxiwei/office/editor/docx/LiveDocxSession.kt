@@ -4,6 +4,8 @@
  * Proprietary and confidential. Unauthorized copying, modification or distribution of this
  * file, via any medium, is strictly prohibited without the written permission of dongb2002.
  */
+@file:Suppress("UNNECESSARY_NOT_NULL_ASSERTION", "UNNECESSARY_SAFE_CALL", "USELESS_ELVIS")
+
 package com.wxiwei.office.editor.docx
 
 import com.wxiwei.office.constant.wp.WPModelConstant
@@ -444,6 +446,8 @@ class LiveDocxSession(control: IControl, private val source: File) {
             if (!editor.insertText(original, text)) return false
             if (!doc.insertMainText(offset, text)) {
                 // a paragraph break or a non text position: saved, shown after reopening
+                // not shown at once: taken only when the file can take it (not across a table or cell boundary)
+                if (!checked(true)) return false
                 needsReopen = true
                 undoStack.add(Step({ editor.undoLast() }, { editor.insertText(original, text) })); redoStack.clear()
                 return true
@@ -461,6 +465,8 @@ class LiveDocxSession(control: IControl, private val source: File) {
     private fun splitParagraph(doc: WPDocument, offset: Long, original: Long): Boolean {
         if (!editor.insertText(original, "\n")) return false
         if (!doc.splitMainParagraph(offset)) {
+            // not shown at once: taken only when the file can take it (not across a table or cell boundary)
+            if (!checked(true)) return false
             needsReopen = true
             undoStack.add(Step({ editor.undoLast() }, { editor.insertText(original, "\n") })); redoStack.clear()
             return true
@@ -480,6 +486,8 @@ class LiveDocxSession(control: IControl, private val source: File) {
     private fun joinParagraphs(doc: WPDocument, mark: Long, os: Long, oe: Long): Boolean {
         if (!editor.deleteText(os, oe)) return false
         if (!doc.joinMainParagraph(mark)) {
+            // not shown at once: taken only when the file can take it (not across a table or cell boundary)
+            if (!checked(true)) return false
             needsReopen = true
             undoStack.add(Step({ editor.undoLast() }, { editor.deleteText(os, oe) })); redoStack.clear()
             return true
@@ -516,6 +524,8 @@ class LiveDocxSession(control: IControl, private val source: File) {
             if (removed == "\n") return joinParagraphs(doc, start, os, oe)
             if (!editor.deleteText(os, oe)) return false
             if (!doc.deleteMainText(start, end)) {
+                // not shown at once: taken only when the file can take it (not across a table or cell boundary)
+                if (!checked(true)) return false
                 needsReopen = true
                 undoStack.add(Step({ editor.undoLast() }, { editor.deleteText(os, oe) })); redoStack.clear()
                 return true
@@ -565,6 +575,8 @@ class LiveDocxSession(control: IControl, private val source: File) {
             if (!editor.replaceText(os, oe, text)) return false
             // the new text goes into the run of the replaced text: insert first, then delete the old
             if (!doc.insertMainText(start, text) ) {
+                // not shown at once: taken only when the file can take it (not across a table or cell boundary)
+                if (!checked(true)) return false
                 needsReopen = true
                 undoStack.add(Step({ editor.undoLast() }, { editor.replaceText(os, oe, text) })); redoStack.clear()
                 return true
@@ -999,7 +1011,7 @@ class LiveDocxSession(control: IControl, private val source: File) {
         return cellRef(table, r, k)
     }
 
-    /** True after an edit was refused because it needs the document saved first ([touchesNewCells]). */
+    /** True after an edit was refused because it needs the document saved first ([touchesNewCells], [insertTable]). */
     var needsFlush = false
         private set
 
@@ -1342,6 +1354,70 @@ class LiveDocxSession(control: IControl, private val source: File) {
         true
     }
 
+    /** A table copied by [copyTable]: the table for [pasteTable], and [text] for other apps (a tab between cells, a line per row). */
+    class TableClip internal constructor(internal val table: com.wxiwei.office.fc.dom4j.Element, val text: String)
+
+    /** The body table holding [offset] with every edit made to it so far; null (see [lastError]) when there is none. */
+    fun copyTable(offset: Long): TableClip? = synchronized(layoutLock) {
+        ownError = null
+        val doc = word.getDocument() as? WPDocument ?: return null.also { refuse("Not a Word document") }
+        val table = doc.getParagraph0(offset) as? com.wxiwei.office.wp.model.TableElement ?: return null.also { refuse("No table here") }
+        val made = newTables[table]
+        val os = made?.anchor ?: toOriginal(table.getStartOffset(), char = true)
+        val ref = made?.let { DocxEditor.CellRef(0, 0, 0, 0, it.op) }
+        val element = editor.copyTable(os, ref, overrides(), cellFills()) ?: return null
+        // the cells' text as shown: paragraphs of a cell joined by spaces
+        val rows = (0 until table.rowCount()).mapNotNull { table.getElementForIndex(it) as? com.wxiwei.office.wp.model.RowElement }
+        val text = rows.joinToString("\n") { row ->
+            (0 until row.getCellNumber()).mapNotNull { row.getElementForIndex(it) }.joinToString("\t") { cell ->
+                doc.getText(cell.getStartOffset(), cell.getEndOffset()).replace('\r', '\n').trim('\n', ' ', '\u0007').replace('\n', ' ').replace('\t', ' ')
+            }
+        }
+        TableClip(element, text)
+    }
+
+    /**
+     * Puts the table of [clip] after the body paragraph (or table) holding [offset], or before it
+     * when [offset] starts it; shown after the document is read again ([needsReopen]). Refused with
+     * [needsFlush] after a paragraph typed in this session.
+     */
+    fun pasteTable(offset: Long, clip: TableClip): Boolean = synchronized(layoutLock) {
+        ownError = null
+        needsFlush = false
+        val doc = word.getDocument() as? WPDocument ?: return refuse("Not a Word document")
+        if ((offset and WPModelConstant.AREA_MASK) != WPModelConstant.MAIN) return refuse("Tables go in the body")
+        if (touchesNewCells(offset)) return refuseInNewCells()
+        val block = doc.getParagraph0(offset) ?: return refuse("No paragraph here")
+        val inTable = block is com.wxiwei.office.wp.model.TableElement
+        val para = doc.getParagraph(offset) as? ParagraphElement
+        if (!inTable && para != null && touchesTyped(para.getStartOffset(), para.getEndOffset())) {
+            needsFlush = true
+            return refuse("Lưu đoạn vừa gõ trước")
+        }
+        // at the start of a non-empty paragraph it goes before it, like Word; else after the block
+        val after = inTable || offset > block.getStartOffset() || block.getEndOffset() - block.getStartOffset() <= 1
+        val to = toOriginal(if (inTable) block.getStartOffset() else offset, char = true)
+        if (!checked(editor.pasteTable(to, after, clip.table))) return false
+        needsReopen = true
+        undoStack.add(Step({ editor.undoLast() }, { editor.pasteTable(to, after, clip.table) })); redoStack.clear()
+        true
+    }
+
+    /** Removes the body table holding [offset]; shown after the document is read again ([needsReopen]). */
+    fun deleteTable(offset: Long): Boolean = synchronized(layoutLock) {
+        ownError = null
+        needsFlush = false
+        val doc = word.getDocument() as? WPDocument ?: return refuse("Not a Word document")
+        val table = doc.getParagraph0(offset) as? com.wxiwei.office.wp.model.TableElement ?: return refuse("No table here")
+        val made = newTables[table]
+        val os = made?.anchor ?: toOriginal(table.getStartOffset(), char = true)
+        val ref = made?.let { DocxEditor.CellRef(0, 0, 0, 0, it.op) }
+        if (!checked(editor.deleteTable(os, ref))) return false
+        needsReopen = true
+        undoStack.add(Step({ editor.undoLast() }, { editor.deleteTable(os, ref) })); redoStack.clear()
+        true
+    }
+
     /** Offsets of the table holding [offset], or null when it is not in a table. */
     fun tableAt(offset: Long): LongRange? {
         val doc = word.getDocument() as? com.wxiwei.office.wp.model.WPDocument ?: return null
@@ -1352,12 +1428,20 @@ class LiveDocxSession(control: IControl, private val source: File) {
     /**
      * A [rows] x [cols] table with thin borders after the body paragraph at [offset], shown at once
      * (with an empty paragraph after it when a table or the end follows, as in the file); otherwise
-     * after the file is read again ([needsReopen]).
+     * after the file is read again ([needsReopen]). Refused with [needsFlush] after a paragraph typed
+     * in this session.
      */
     fun insertTable(offset: Long, rows: Int, cols: Int): Boolean = synchronized(layoutLock) {
         ownError = null
+        needsFlush = false
         val doc = word.getDocument() as? WPDocument
         val para = doc?.getParagraph(offset) as? ParagraphElement
+        // after a paragraph typed in this session: the file has no place for it yet (it would land
+        // where the typing started), saving the working copy first gives it one
+        if (para != null && (offset and WPModelConstant.AREA_MASK) == WPModelConstant.MAIN && touchesTyped(para.getEndOffset() - 1, para.getEndOffset())) {
+            needsFlush = true
+            return refuse("Lưu đoạn vừa gõ trước")
+        }
         // live: a body paragraph whose mark is in the file (the table goes after that paragraph there)
         val live = doc != null && para != null && (offset and WPModelConstant.AREA_MASK) == WPModelConstant.MAIN &&
             am.getParaLevel(para.getAttribute()) < 0 && !touchesTyped(para.getEndOffset() - 1, para.getEndOffset())
@@ -1504,14 +1588,16 @@ class LiveDocxSession(control: IControl, private val source: File) {
         }
     }
 
-    private fun colorAt(offset: Long): Int {
+    /** RGB of the text at [offset] (no alpha), or -1. */
+    fun colorAt(offset: Long): Int {
         val doc = word.getDocument()
         val para = doc.getParagraph(offset) ?: return -1
         val leaf = doc.getLeaf(offset) ?: return -1
         return am.getFontColor(para.getAttribute(), leaf.getAttribute()) and 0xFFFFFF
     }
 
-    private fun sizeAt(offset: Long): Float {
+    /** Size in points of the text at [offset], or 0. */
+    fun sizeAt(offset: Long): Float {
         val doc = word.getDocument()
         val para = doc.getParagraph(offset) ?: return 0f
         val leaf = doc.getLeaf(offset) ?: return 0f

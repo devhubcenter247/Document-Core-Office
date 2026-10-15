@@ -90,6 +90,10 @@
     <string name="pdf_ocr">Nhận dạng chữ (OCR)</string>
     <string name="pdf_ocr_done">Đã nhận dạng chữ trên %1$d trang</string>
     <string name="pdf_ocr_nothing">Mọi trang đã có chữ; bản sao không thay đổi</string>
+    <string name="pdf_ocr_scan_page">Trang này là ảnh scan nên chưa chọn được chữ. Nhận dạng chữ (OCR) trang này vào tệp để chọn, tô và sao chép? Các trang scan khác sẽ được nhận dạng khi bạn nhấn giữ vào chúng.</string>
+    <string name="pdf_ocr_recognize">Nhận dạng</string>
+    <string name="pdf_ocr_scan_done">Đã nhận dạng chữ. Nhấn giữ vào một từ để chọn.</string>
+    <string name="pdf_ocr_scan_none">Không tìm thấy chữ trên trang này</string>
     <string name="pdf_compress">Nén</string>
     <string name="pdf_compress_low">Thấp: giữ chất lượng tốt nhất</string>
     <string name="pdf_compress_medium">Vừa: nên dùng</string>

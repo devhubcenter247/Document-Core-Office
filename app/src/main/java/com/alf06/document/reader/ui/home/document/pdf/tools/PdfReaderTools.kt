@@ -60,8 +60,8 @@ internal class PdfReaderTools(
         val inkWidth: Float
         /** Writes the edits into the file; [done] tells if it did (false also when there was nothing to save). */
         fun saveEdits(done: (Boolean) -> Unit)
-        /** The file changed on disk: open it again at the same page. */
-        fun reload()
+        /** The file changed on disk: open it again at the same page; [looks] false when the pages look the same. */
+        fun reload(looks: Boolean = true)
         /** Edits changed: refresh undo/redo/save buttons. */
         fun editsChanged()
         /** Shows or hides the annotation toolbar (pen colors, undo, save). */
@@ -605,6 +605,49 @@ internal class PdfReaderTools(
         runner.run(str(R.string.pdf_ocr), baseName, "ocr") { output, progress ->
             val pages = tools.addTextLayer(src, output, progress)
             if (pages == 0) str(R.string.pdf_ocr_nothing) else str(R.string.pdf_ocr_done, pages)
+        }
+    }
+
+    // the user agreed to OCR into this file: other scanned pages are recognized without asking
+    private var ocrAgreedFor: File? = null
+
+    /** A long press found no text: on a scanned page, offer to recognize its text into this file. */
+    fun longPressed(x: Float, y: Float) {
+        if (!host.loaded || annotating || pdfView.hasTextSelection()) return
+        val page = pdfView.pageAt(x, y) ?: return
+        if (!pdfView.isScannedPage(page)) return
+        if (ocrAgreedFor != null && ocrAgreedFor == host.file) return recognizeInPlace(page)
+        dialogs.confirm(str(R.string.pdf_ocr), str(R.string.pdf_ocr_scan_page), str(R.string.pdf_ocr_recognize)) {
+            ocrAgreedFor = host.file
+            recognizeInPlace(page)
+        }
+    }
+
+    /**
+     * OCR of [page] only (a whole long document takes far too long) into the opened file itself,
+     * then the reader opens it again at the same page.
+     */
+    private fun recognizeInPlace(page: Int) {
+        // writing over a protected file would drop its password: a copy instead
+        if (host.password != null) return recognizeText()
+        withSavedEdits {
+            val src = source ?: return@withSavedEdits
+            val temp = File(src.file.parentFile, ".${src.file.name}.ocr")
+            runner.start(str(R.string.pdf_ocr), temp, onSuccess = { message ->
+                message?.let(::toast)
+                host.reload(looks = false)
+            }) { output, progress ->
+                val pages = tools.addTextLayer(src, output, progress, only = listOf(page))
+                if (pages == 0) {
+                    output.delete()
+                    return@start str(R.string.pdf_ocr_scan_none)
+                }
+                if (!output.renameTo(src.file)) {
+                    output.copyTo(src.file, overwrite = true)
+                    output.delete()
+                }
+                str(R.string.pdf_ocr_scan_done)
+            }
         }
     }
 

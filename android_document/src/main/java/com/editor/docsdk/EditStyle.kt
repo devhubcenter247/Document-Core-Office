@@ -73,6 +73,14 @@ data class EditStyle @JvmOverloads constructor(
     @DrawableRes val backIcon: Int? = null,
     /** Called on the Excel formula box once it is made; null: nothing more. */
     val inputStyler: InputStyler? = null,
+    /** Background of the format bar over the keyboard (PowerPoint text typed in place); null: [toolbarBackground]. */
+    val textBarBackground: Int? = null,
+    /** Height of the format bar's buttons; the bar is this plus a 4dp margin above and below. */
+    val textBarButtonDp: Int = 36,
+    /** Size of the format bar's icons. */
+    val textBarIconDp: Int = 20,
+    /** Space between the format bar's buttons. */
+    val textBarSpacingDp: Int = 6,
 ) {
     /** The icon of [action]'s button, tinted like the SDK's; null keeps the SDK's icon ([EditAction.icon]). */
     fun interface Icons {

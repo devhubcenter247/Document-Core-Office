@@ -137,11 +137,38 @@ class PdfToolsTest {
         assertEquals(1, pages)
         val t = text(out, 0)
         assertTrue("recognized: $t", t.contains("HELLO") && t.contains("WORLD"))
+        assertTrue("the words stay apart: $t", t.contains("HELLO SCANNED WORLD"))
         // the words sit where the picture shows them (upper part of the page)
         withDoc(out) { doc ->
             val layout = pdfium.getPageTextLayout(doc, 0)!!
             val hello = layout.words.first { it.text.contains("HELLO") }
             assertTrue("placed ${hello.bounds}", hello.bounds.top < layout.pageHeight * 0.3f && hello.bounds.left < layout.pageWidth * 0.3f)
+        }
+    }
+
+    /** OCR text keeps a space between words (search, copy, read aloud), none at a line's end, and each word on its own box. */
+    @Test
+    fun ocrWordsAreSeparated() = runBlocking {
+        val page = Bitmap.createBitmap(1240, 1754, Bitmap.Config.ARGB_8888)
+        Canvas(page).apply {
+            drawColor(Color.WHITE)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 56f; color = Color.BLACK }
+            drawText("We will deliver the goods", 120f, 300f, paint)
+            drawText("Account number paid today", 120f, 420f, paint)
+        }
+        val src = file("ocr_words_src.pdf")
+        tools.createFromImages(src) { addImage(page) }
+        val out = file("ocr_words_out.pdf")
+        assertEquals(1, tools.addTextLayer(PdfSource(src), out))
+        val t = text(out, 0)
+        assertTrue("words apart: $t", t.contains("will deliver") && t.contains("the goods") && !t.contains("willdeliver"))
+        assertTrue("second line: $t", t.contains("number paid"))
+        withDoc(out) { doc ->
+            val layout = pdfium.getPageTextLayout(doc, 0)!!
+            val will = layout.words.first { it.text == "will" }
+            val deliver = layout.words.first { it.text == "deliver" }
+            assertTrue("each word on its own box: ${will.bounds} ${deliver.bounds}", will.bounds.right <= deliver.bounds.left + 2f)
+            assertTrue("no space at a line's end: '${layout.text}'", !layout.text.contains("goods \n") && !layout.text.contains("goods \r"))
         }
     }
 

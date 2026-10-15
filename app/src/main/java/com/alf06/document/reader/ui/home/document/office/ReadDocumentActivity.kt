@@ -1,5 +1,6 @@
 package com.alf06.document.reader.ui.home.document.office
 
+import com.editor.docsdk.SlideShowView
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
@@ -592,29 +593,14 @@ class ReadDocumentActivity :
 
     private fun startSlideShow() {
         val reader = reader
-        val slides = reader?.thumbnails
-        val count = reader?.state?.value?.pageCount ?: 0
-        val presentation = reader?.control?.getView() as? com.wxiwei.office.pg.control.Presentation
-        val size = presentation?.getPageSize()
-        if (reader == null || slides == null || count == 0 || size == null || size.width <= 0 || size.height <= 0) {
-            toast(R.string.can_slide_show_now)
-            return
-        }
-        val document = document ?: return
-        val startAt = (reader.state.value.pageNumber - 1).coerceIn(0, count - 1)
-        val panel = editPanel as? com.wxiwei.office.editor.ui.SlideEditPanel
-        lifecycleScope.launch {
-            // animations, transitions, links and titles: from the edits in progress, or the file
-            val script = slideScript()
-            if (isFinishing || isDestroyed) return@launch
-            SlideShowActivity.source = SlideShowActivity.Source(
-                count = count,
-                aspect = size.width.toFloat() / size.height,
-                startAt = startAt,
-                script = script,
-                layers = { page, width, animated -> slides.slideLayers(page, width, animated) },
-                invalidated = reader.thumbnailInvalidated,
-            )
+        val document = document
+        if (reader == null || document == null) return toast(R.string.can_slide_show_now)
+        val startAt = reader.state.value.pageNumber - 1
+        // animations, transitions, links and titles: from the edits in progress, or the file
+        SlideShowView.prepare(reader, File(document.path), editPanel as? com.wxiwei.office.editor.ui.SlideEditPanel, startAt) { source ->
+            if (isFinishing || isDestroyed) return@prepare
+            if (source == null) return@prepare toast(R.string.can_slide_show_now)
+            SlideShowActivity.source = source
             launchActivity<SlideShowActivity>()
         }
     }

@@ -8,6 +8,7 @@ package com.editor.docsdk
 
 import androidx.annotation.MainThread
 import com.wxiwei.office.editor.ui.OfficeEditPanel
+import com.wxiwei.office.editor.ui.SlideEditPanel
 
 /**
  * Edits the document of a [DocumentView], from [DocumentView.startEditing]. With the SDK's bar
@@ -76,11 +77,49 @@ class DocumentEditor internal constructor(val panel: OfficeEditPanel) {
     /** Whether [action] can run on this document. */
     fun isAvailable(action: EditAction): Boolean = panel.isAvailable(action)
 
+    /**
+     * Whether [action] can run now: false for Undo or Redo with nothing to undo or redo, Copy and
+     * Cut with nothing selected, Paste with nothing on the clipboard, and for every command while
+     * the document reopens after an edit. Grey your button out when false.
+     */
+    fun isEnabled(action: EditAction): Boolean = panel.isEnabled(action)
+
     /** Whether [action] is on where the caret or selection is (bold text, wrapped cell...). */
     fun isActive(action: EditAction): Boolean = panel.isActive(action)
 
     /** What is selected or what to do next, as a short sentence. */
     val status: String get() = panel.status
+
+    /** What the user works on now (text, a table, cells, a shape...), or null when nothing is selected. */
+    val context: EditContext? get() = panel.editContext
+
+    /**
+     * The commands for what is selected now, as the context bar shows them; empty when nothing is.
+     * An app with its own bar shows these (refreshed in [Listener.onStateChanged]).
+     */
+    fun contextActions(): List<EditAction> = panel.contextActions()
+
+    /**
+     * Shows the SDK's context bar (true by default): the commands for what is selected (copy and
+     * paste, a table's rows and columns, the format of the text...), over the keyboard or the SDK's
+     * bar. Its look follows [EditStyle] (textBar* sizes). False: build your own from [context] and
+     * [contextActions].
+     */
+    var contextBar: Boolean
+        get() = panel.contextBar
+        set(value) { panel.contextBar = value }
+
+    /** Changes the commands of a context: given it and the SDK's commands, returns those to show (empty hides the bar there). */
+    fun interface ContextCommands {
+        fun commands(context: EditContext, defaults: List<EditAction>): List<EditAction>
+    }
+
+    /** The app's choice of commands for each context; null: the SDK's. */
+    var contextCommands: ContextCommands? = null
+        set(value) {
+            field = value
+            panel.contextCommands = value?.let { c -> { context, defaults -> c.commands(context, defaults) } }
+        }
 
     /**
      * Runs [action]. When it needs a value it asks the user (with [dialogs], or the SDK's dialog).
@@ -92,6 +131,52 @@ class DocumentEditor internal constructor(val panel: OfficeEditPanel) {
     /** Runs [action] with [value] instead of asking the user; see [EditAction] for the value of each. */
     @MainThread
     fun run(action: EditAction, value: Any?): Boolean = panel.run(action, value, true)
+
+    /**
+     * PowerPoint: the text of the selected text box, as being typed while it is edited in place;
+     * paragraphs and line breaks are one "\n" each. Null when no shape is selected or in Word and Excel.
+     * Positions in it are those of [textSelection] and [formatText].
+     */
+    val selectedText: String? get() = (panel as? SlideEditPanel)?.selectedText()
+
+    /**
+     * PowerPoint: the part of [selectedText] the user selected while typing in the text box (end
+     * exclusive), or null. Format commands such as [EditAction.BOLD] or [EditAction.FONT] apply to it.
+     */
+    val textSelection: IntRange? get() = (panel as? SlideEditPanel)?.textSelection()
+
+    /**
+     * PowerPoint: formats chars [start, end) of the selected text box's text (positions as in
+     * [selectedText]) with [format], shown at once and undone with [EditAction.UNDO]. While the box is
+     * edited in place, the editor stays open with the same part selected. Returns false when no
+     * text box is selected, the range is outside its text, a value is invalid, or in Word and Excel.
+     */
+    @MainThread
+    fun formatText(start: Int, end: Int, format: TextFormat): Boolean {
+        val slides = panel as? SlideEditPanel ?: return false
+        return slides.formatText(start, end, com.wxiwei.office.editor.pptx.TextFormat(
+            bold = format.bold, italic = format.italic, underline = format.underline,
+            sizePt = format.sizePt, rgbHex = format.color?.removePrefix("#"), font = format.font))
+    }
+
+    /**
+     * PowerPoint: shows the SDK's format bar over the keyboard while text is typed in a shape (true
+     * by default). Set it to false to use your own buttons: [Listener.onStateChanged] is called as
+     * the selection moves; read [textSelection] and [isActive], then run the format commands or
+     * [formatText]. Takes effect the next time a shape's text is edited.
+     */
+    var textFormatBar: Boolean
+        get() = (panel as? SlideEditPanel)?.textBar ?: false
+        set(value) { (panel as? SlideEditPanel)?.textBar = value }
+
+    /**
+     * PowerPoint: the buttons of that bar, in order (hide one by leaving it out). [EditAction.FONT]
+     * shows the font's name, [EditAction.FONT_SIZE] shows − size +. Colors and icons follow
+     * [EditStyle] like the SDK's other bars.
+     */
+    var textFormatBarActions: List<EditAction>
+        get() = (panel as? SlideEditPanel)?.textBarActions ?: emptyList()
+        set(value) { (panel as? SlideEditPanel)?.textBarActions = value }
 
     /** True when there are edits not saved yet. */
     fun hasUnsavedChanges(): Boolean = panel.hasChanges()

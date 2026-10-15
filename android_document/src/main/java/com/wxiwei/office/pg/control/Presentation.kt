@@ -11,6 +11,8 @@
  * 编译器:            android2.2
  * 时间:              下午3:49:28
  */
+@file:Suppress("UNNECESSARY_LATEINIT", "SENSELESS_COMPARISON")
+
 package com.wxiwei.office.pg.control
 
 import android.app.Activity

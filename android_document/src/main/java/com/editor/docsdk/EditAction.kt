@@ -39,7 +39,10 @@ enum class EditAction(@DrawableRes val icon: Int, @StringRes val label: Int) {
     HIGHLIGHT(R.drawable.docsdk_ic_format_ink_highlighter, R.string.docsdk_edit_highlight),
     /** Excel. Value: color "RRGGBB", or null for none. */
     FILL_COLOR(R.drawable.docsdk_ic_format_color_fill, R.string.docsdk_edit_fill_color),
-    /** Word. Value: font name. */
+    /**
+     * Word and PowerPoint. Value: font name. In PowerPoint, like the other text formats, it applies to
+     * the part selected while typing in a text box, or else to all its text.
+     */
     FONT(R.drawable.docsdk_ic_font_download, R.string.docsdk_edit_font),
     /** Value: size in points (Number). */
     FONT_SIZE(R.drawable.docsdk_ic_format_size, R.string.docsdk_edit_font_size),
@@ -62,6 +65,8 @@ enum class EditAction(@DrawableRes val icon: Int, @StringRes val label: Int) {
     // ---- Word: selection and clipboard ----
     SELECT_WORD(R.drawable.docsdk_ic_text_select_start, R.string.docsdk_edit_select_word),
     SELECT_PARAGRAPH(R.drawable.docsdk_ic_segment, R.string.docsdk_edit_select_paragraph),
+    /** The whole table at the caret: then COPY copies the table, and PASTE puts it back as a table. */
+    SELECT_TABLE(R.drawable.docsdk_ic_table, R.string.docsdk_edit_select_table),
     SELECT_ALL(R.drawable.docsdk_ic_select_all, R.string.docsdk_edit_select_all),
     DESELECT(R.drawable.docsdk_ic_deselect, R.string.docsdk_edit_deselect),
     COPY(R.drawable.docsdk_ic_content_copy, R.string.docsdk_edit_copy),

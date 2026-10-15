@@ -431,4 +431,82 @@ class PdfViewEditTest {
             assertEquals("a@b.vn", pd.documentCatalog.acroForm.getField("email").valueAsString)
         }
     }
+
+    /** The frame of added text hugs its glyphs: no more than a few points around them on each side. */
+    @Test
+    fun textFrameFitsItsText() {
+        val file = textPdf("view_text_frame.pdf", 1)
+        val saved = File(context.cacheDir, "view_text_frame_saved.pdf").also { it.delete() }
+        val frames = ArrayList<RectF>()
+        withView(file) { view ->
+            for ((y, text) in listOf(600f to "Xin chào Việt Nam", 400f to "Dòng một\nDòng hai dài hơn")) {
+                val name = onMain { view.addText(0, 60f, y, text, 13f, Color.RED) }!!
+                frames += onMain { view.movableBounds(name) }!!
+            }
+            // a frame dragged wider (same height), and one made taller: the frame stays on the text
+            val wide = onMain { view.addText(0, 60f, 250f, "Kéo rộng khung", 13f, Color.RED) }!!
+            val w = onMain { view.movableBounds(wide) }!!
+            assertTrue(onMain { view.moveAnnotation(wide, RectF(w.left, w.top, w.right + 120f, w.bottom)) })
+            frames += onMain { view.movableBounds(wide) }!!
+            val tall = onMain { view.addText(0, 60f, 150f, "Phóng to chữ", 13f, Color.RED) }!!
+            val t = onMain { view.movableBounds(tall) }!!
+            assertTrue(onMain { view.moveAnnotation(tall, RectF(t.left, t.top, t.right, t.top - (t.top - t.bottom) * 1.5f)) })
+            frames += onMain { view.movableBounds(tall) }!!
+            assertTrue(view.saveDocument(saved))
+        }
+        // 1 px = 1 pt; PDF y goes up
+        val page = renderPage(saved, 595)
+        for (frame in frames) {
+            var l = Int.MAX_VALUE; var r = -1; var t = Int.MAX_VALUE; var b = -1
+            for (y in (842 - frame.top - 20).toInt().coerceAtLeast(0) until (842 - frame.bottom + 20).toInt().coerceAtMost(841))
+                for (x in (frame.left - 20).toInt().coerceAtLeast(0) until (frame.right + 20).toInt().coerceAtMost(594)) {
+                    val c = page.getPixel(x, y)
+                    if (Color.red(c) > 150 && Color.green(c) < 120) { l = minOf(l, x); r = maxOf(r, x); t = minOf(t, y); b = maxOf(b, y) }
+                }
+            val ink = RectF(l.toFloat(), (842 - t).toFloat(), (r + 1).toFloat(), (842 - b - 1).toFloat())
+            val margins = listOf(ink.left - frame.left, frame.right - ink.right, frame.top - ink.top, ink.bottom - frame.bottom)
+            android.util.Log.i("TEXTFRAME", "frame $frame ink $ink margins $margins")
+            assertTrue("text inside its frame: $margins", margins.all { it >= -1f })
+            assertTrue("frame hugs the text: $margins (left, right, top, bottom)", margins.all { it <= 5f })
+        }
+    }
+
+    /** A long press on a word selects the whole word (Vietnamese marks included), not one letter. */
+    @Test
+    fun longPressSelectsTheWord() {
+        val file = File(context.cacheDir, "view_long_press.pdf").also { it.delete() }
+        android.graphics.pdf.PdfDocument().also { doc ->
+            val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create())
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 40f }
+            page.canvas.drawText("Hello wonderful world", 60f, 200f, paint)
+            page.canvas.drawText("Xin chào các bạn", 60f, 300f, paint)
+            doc.finishPage(page)
+            file.outputStream().use { doc.writeTo(it) }
+            doc.close()
+        }
+        val bounds = PdfiumCore(context).let { core ->
+            val doc = core.newDocument(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY))
+            try { core.getPageTextLayout(doc, 0)!!.let { l -> listOf("wonderful", "chào").associateWith { w -> l.words.first { it.text == w }.bounds to l.pageHeight } } }
+            finally { core.closeDocument(doc) }
+        }
+        withView(file) { view ->
+            onMain { view.enableTextSelection(true) }
+            for ((word, place) in bounds) {
+                val (b, height) = place
+                // shown bounds (y down) to PDF bounds (y up), then to the view, then to the screen
+                val v = onMain { view.pageRectToView(0, RectF(b.left, height - b.top, b.right, height - b.bottom)) }!!
+                val at = IntArray(2).also { a -> onMain { view.getLocationOnScreen(a) } }
+                val x = at[0] + v.left + v.width() * 0.4f; val y = at[1] + v.centerY()
+                val automation = instrumentation.uiAutomation
+                val t0 = android.os.SystemClock.uptimeMillis()
+                for ((action, time) in listOf(android.view.MotionEvent.ACTION_DOWN to t0, android.view.MotionEvent.ACTION_UP to t0 + 900)) {
+                    if (action == android.view.MotionEvent.ACTION_UP) Thread.sleep(900)
+                    android.view.MotionEvent.obtain(t0, time, action, x, y, 0).also { it.source = android.view.InputDevice.SOURCE_TOUCHSCREEN; automation.injectInputEvent(it, true); it.recycle() }
+                }
+                Thread.sleep(600)
+                assertEquals("long press on '$word'", word, onMain { view.selectedText })
+                onMain { view.clearTextSelection() }
+            }
+        }
+    }
 }

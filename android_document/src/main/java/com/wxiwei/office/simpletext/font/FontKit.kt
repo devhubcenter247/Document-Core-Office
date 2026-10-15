@@ -67,12 +67,17 @@ class FontKit {
         // 字符样式
         val fontIndex = s!!.getFontIndex().toInt()
         // the cell font's own family (resolved like Word text), real bold/italic faces
+        val name = font.getName()
         paint.typeface = typefaceCache.getOrPut(fontIndex) {
             val manage = FontTypefaceManage.instance()
-            val name = font.getName()
             if (name.isNullOrEmpty()) Typeface.create(Typeface.SANS_SERIF, (if (isbold) Typeface.BOLD else 0) or (if (isitalics) Typeface.ITALIC else 0))
             else manage.getFontTypeface(manage.addFontName(name), isbold, isitalics)
         }
+        // what the device's font cannot draw (some keep their system font upright) is faked
+        val fake = if (name.isNullOrEmpty()) (if (isbold && !paint.typeface.isBold) Typeface.BOLD else 0) or (if (isitalics && !paint.typeface.isItalic) Typeface.ITALIC else 0)
+            else FontTypefaceManage.instance().let { it.fakeStyle(it.addFontName(name), isbold, isitalics) }
+        if (fake and Typeface.BOLD != 0) paint.isFakeBoldText = true
+        if (fake and Typeface.ITALIC != 0) paint.textSkewX = FontTypefaceManage.FAKE_ITALIC_SKEW
         // fontsize
         paint.textSize = (font.getFontSize() * MainConstant.POINT_TO_PIXEL + 0.5f).toFloat()
         // color

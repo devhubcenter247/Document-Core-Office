@@ -148,14 +148,14 @@ class SlideShowTest {
             scenario.onActivity { ReadDocumentActivity::class.java.getDeclaredMethod("startSlideShow").apply { isAccessible = true }.invoke(it) }
             waitFor("the show") { showActivity() != null }
             val show = showActivity()!!
-            waitFor("slide 1") { onMain { show.shownSlide == 0 && show.stageView.current != null && !show.stageView.isAnimating } }
+            waitFor("slide 1") { onMain { show.shownSlide == 0 && !show.showView.slideBounds.isEmpty && !show.showView.isAnimating } }
             onMain {
                 val p = viewer.control!!.getView() as com.wxiwei.office.pg.control.Presentation
                 android.util.Log.i("ShowTest", "file shapes ${PptxEditor(file).listShapes(0).map { "${it.id}:${it.kind}:${it.name}" }}")
                 android.util.Log.i("ShowTest", "model shapes ${p.getSlide(0)!!.getShapes().map { "${it.shapeID}:${it.javaClass.simpleName}:${it.isHidden}" }}")
-                android.util.Log.i("ShowTest", "layers ${show.stageView.current!!.shapes.keys}")
+                android.util.Log.i("ShowTest", "layers ${show.showView.animatedShapes}")
             }
-            fun shape(id: Int) = onMain { show.stageView.current!!.shapes[id]!!.visibility }
+            fun shape(id: Int) = onMain { show.showView.shapeView(id)!!.visibility }
             assertEquals("A waits for its entrance", View.INVISIBLE, shape(a))
             assertEquals("B waits for its entrance", View.INVISIBLE, shape(b))
             screenshot("show_1_start")
@@ -164,58 +164,58 @@ class SlideShowTest {
             waitFor("tap 1") { onMain { show.shownStep == 1 } }
             Thread.sleep(200)
             screenshot("show_1_moving")
-            waitFor("tap 1 done") { onMain { !show.stageView.isAnimating } }
+            waitFor("tap 1 done") { onMain { !show.showView.isAnimating } }
             assertEquals(1, onMain { show.shownStep })
             assertEquals(View.VISIBLE, shape(a)); assertEquals(View.VISIBLE, shape(b))
             screenshot("show_1_step1")
             // tap 2: B zooms out
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_PAGE_DOWN)
             waitFor("tap 2") { onMain { show.shownStep == 2 } }
-            waitFor("tap 2 done") { onMain { !show.stageView.isAnimating } }
-            android.util.Log.i("ShowTest", "after tap 2: step ${onMain { show.shownStep }} B alpha ${onMain { show.stageView.current!!.shapes[b]!!.alpha }} scale ${onMain { show.stageView.current!!.shapes[b]!!.scaleX }}")
+            waitFor("tap 2 done") { onMain { !show.showView.isAnimating } }
+            android.util.Log.i("ShowTest", "after tap 2: step ${onMain { show.shownStep }} B alpha ${onMain { show.showView.shapeView(b)!!.alpha }} scale ${onMain { show.showView.shapeView(b)!!.scaleX }}")
             assertEquals("B gone", View.INVISIBLE, shape(b))
             // tap 3: slide 2, pushed in
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             waitFor("slide 2") { onMain { show.shownSlide == 1 } }
             Thread.sleep(150)
             screenshot("show_2_push")
-            waitFor("push done") { onMain { !show.stageView.isAnimating } }
+            waitFor("push done") { onMain { !show.showView.isAnimating } }
             // back: slide 1 as it ended
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_VOLUME_UP)
-            waitFor("back on slide 1") { onMain { show.shownSlide == 0 && show.stageView.current?.index == 0 } }
+            waitFor("back on slide 1") { onMain { show.shownSlide == 0 && !show.showView.isAnimating } }
             assertEquals("at its end", 2, onMain { show.shownStep })
             assertEquals("B still gone", View.INVISIBLE, shape(b))
             Thread.sleep(300)
-            android.util.Log.i("ShowTest", "back: A ${shape(a)} alpha ${onMain { show.stageView.current!!.shapes[a]!!.alpha }} children ${onMain { show.stageView.childCount }}")
+            android.util.Log.i("ShowTest", "back: A ${shape(a)} alpha ${onMain { show.showView.shapeView(a)!!.alpha }}")
             screenshot("show_1_back")
             assertEquals("A shown at the end of slide 1", View.VISIBLE, shape(a))
             // the link on the third shape jumps to the last slide
             val (lx, ly) = onMain {
-                val frame = show.stageView.current!!
-                val loc = IntArray(2); show.stageView.getLocationOnScreen(loc)
-                val left = loc[0] + (show.stageView.width - frame.slideWidth) / 2f
-                val top = loc[1] + (show.stageView.height - frame.slideHeight) / 2f
+                val at = show.showView.slideBounds
+                val loc = IntArray(2); show.showView.getLocationOnScreen(loc)
+                // px of the stage per px of the slide at zoom 1
+                val zoom = at.width() / (viewer.control!!.getView() as com.wxiwei.office.pg.control.Presentation).getPageSize()!!.width
                 val r = rects.getValue(linked)
-                (left + (r.x + r.width / 2f) / 9525f * frame.layers.zoom) to (top + (r.y + r.height / 2f) / 9525f * frame.layers.zoom)
+                (loc[0] + at.left + (r.x + r.width / 2f) / 9525f * zoom) to (loc[1] + at.top + (r.y + r.height / 2f) / 9525f * zoom)
             }
             tap(lx, ly)
             waitFor("the last slide") { onMain { show.shownSlide == viewer.state.value.pageCount - 1 } }
             screenshot("show_last")
             // pen: one stroke on this slide
             click(show, "✎ Bút")
-            val (cx, cy) = onMain { val loc = IntArray(2); show.stageView.getLocationOnScreen(loc); (loc[0] + show.stageView.width / 2f) to (loc[1] + show.stageView.height / 2f) }
+            val (cx, cy) = onMain { val loc = IntArray(2); show.showView.getLocationOnScreen(loc); (loc[0] + show.showView.width / 2f) to (loc[1] + show.showView.height / 2f) }
             val t = SystemClock.uptimeMillis()
             inject(MotionEvent.ACTION_DOWN, cx - 200, cy, t)
             for (k in 1..10) { inject(MotionEvent.ACTION_MOVE, cx - 200 + k * 40f, cy + (k % 2) * 30f, t); Thread.sleep(16) }
             inject(MotionEvent.ACTION_UP, cx + 200, cy, t)
             Thread.sleep(300)
-            assertEquals("one stroke", 1, onMain { show.inkView.strokesOf(show.shownSlide).size })
+            assertEquals("one stroke", 1, onMain { show.showView.strokeCount() })
             screenshot("show_pen")
             click(show, "Xong")
             // the slide list: back to slide 1
             click(show, "☰ Danh sách")
             a11yTapStarting("1. ")
-            waitFor("slide 1 from the list") { onMain { show.shownSlide == 0 && !show.stageView.isAnimating } }
+            waitFor("slide 1 from the list") { onMain { show.shownSlide == 0 && !show.showView.isAnimating } }
             // timed advance: 3 s
             click(show, "⏱ Tự chuyển")
             a11yTapStarting("3 giây")

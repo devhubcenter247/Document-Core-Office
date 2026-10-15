@@ -63,6 +63,11 @@
             android:theme="@style/AdFullScreen"
             tools:replace="android:theme" />
 
+        <!-- ML Kit models from Google Play services, downloaded when the app is installed -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr,langid"
+            tools:replace="android:value" />
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="${ad_app_id}" />

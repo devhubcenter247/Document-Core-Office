@@ -24,7 +24,7 @@ object SlideGeometry {
             // getSlideDrawingRect spans the entire view height; SlideShowView centers actual content.
             (p.getSlideDrawingRect()?.left ?: ((p.width - width) / 2)).toFloat() to ((p.height - height) / 2).toFloat()
         } else {
-            val item = p.getPrintMode().getListView()?.getCurrentPageView() ?: return null
+            val item = p.getPrintMode().getListView()?.currentPageViewOrNull() ?: return null
             val a = IntArray(2); val b = IntArray(2)
             p.getLocationOnScreen(a); item.getLocationOnScreen(b)
             (b[0] - a[0]).toFloat() to (b[1] - a[1]).toFloat()
@@ -41,6 +41,30 @@ object SlideGeometry {
         return RectF((m.left + rectEmu.x * m.scale).toFloat(), (m.top + rectEmu.y * m.scale).toFloat(),
             (m.left + (rectEmu.x.toDouble() + rectEmu.width) * m.scale).toFloat(), (m.top + (rectEmu.y.toDouble() + rectEmu.height) * m.scale).toFloat())
     }
+    /** Slide EMU covered by one view pixel at the current zoom, or null before the slide is laid out. */
+    fun emuPerPixel(presentation: Presentation): Double? = mapping(presentation)?.let { 1.0 / it.scale }
+
+    /**
+     * The shape a finger means at [emuPoint]: among the shapes under it the smallest wins (the topmost
+     * on a tie), so a text box stays reachable under a full-slide picture, a transparent cover or its
+     * group. With none under it, the nearest within [slopEmu] of the point, for small boxes.
+     */
+    fun pick(shapes: List<PptxShapeInfo>, emuPoint: Point, slopEmu: Long = 0): PptxShapeInfo? {
+        val boxes = shapes.withIndex().filter { it.value.rectEmu.width > 0 && it.value.rectEmu.height > 0 }
+        val under = boxes.filter { distance(it.value.rectEmu, emuPoint) == 0.0 }
+        if (under.isNotEmpty()) return under.minWith(compareBy<IndexedValue<PptxShapeInfo>> { it.value.rectEmu.width.toDouble() * it.value.rectEmu.height }
+            .thenByDescending { it.index }).value
+        return boxes.map { it to distance(it.value.rectEmu, emuPoint) }.filter { it.second <= slopEmu }
+            .minWithOrNull(compareBy<Pair<IndexedValue<PptxShapeInfo>, Double>> { it.second }.thenByDescending { it.first.index })?.first?.value
+    }
+
+    /** Distance from [p] to the rectangle [r], 0 inside it. */
+    private fun distance(r: Rect, p: Point): Double {
+        val dx = maxOf(r.x - p.x, 0L, p.x - (r.x + r.width)).toDouble()
+        val dy = maxOf(r.y - p.y, 0L, p.y - (r.y + r.height)).toDouble()
+        return Math.hypot(dx, dy)
+    }
+
     fun hitTest(shapes: List<PptxShapeInfo>, emuPoint: Point): PptxShapeInfo? = shapes.lastOrNull {
         val r = it.rectEmu
         r.width > 0 && r.height > 0 && emuPoint.x >= r.x && emuPoint.y >= r.y && emuPoint.x.toDouble() < r.x.toDouble() + r.width && emuPoint.y.toDouble() < r.y.toDouble() + r.height

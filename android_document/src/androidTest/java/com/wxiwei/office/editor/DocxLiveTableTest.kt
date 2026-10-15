@@ -76,6 +76,42 @@ class DocxLiveTableTest {
         assertEquals(listOf(listOf(listOf("a", "", ""), listOf("", "", ""))), tables)
     }
 
+    /**
+     * A new document made two pages long with Enter and a table on the second page (which reopens
+     * the working copy, as the panel does), then Backspace again and again from just before it.
+     */
+    @Test fun backspaceBeforeTableOfNewDocument() {
+        val source = blank("backspace")
+        val working = OpenDocument.output("docx_livetable_backspace_working.docx")
+        OpenDocument.open(source, { it.layout != null }) { reader ->
+            val s = onMain { LiveDocxSession(reader.control!!, source) }
+            for (i in 0 until 60) ok(s, onMain { s.insertText(i.toLong(), "\n") })
+            // after a paragraph typed just now: the working copy is saved first
+            assertFalse(onMain { s.insertTable(55, 2, 2) })
+            assertTrue("asks for a save first", s.needsFlush)
+            val result = onMain { s.save(working) }
+            assertTrue(result.toString(), result is EditResult.Ok)
+        }
+        OpenDocument.open(working, { it.layout != null }) { reader ->
+            val s = onMain { LiveDocxSession(reader.control!!, working) }
+            val doc = onMain { (reader.control!!.getView() as Word).getDocument() as WPDocument }
+            ok(s, onMain { s.insertTable(55, 2, 2) })
+            assertFalse("shown at once", s.needsReopen)
+            val table = onMain { doc.getTableCollection(0)!!.getElementForIndex(0)!!.let { it.getStartOffset() until it.getEndOffset() } }
+            assertEquals("right after the paragraph it was asked for", 56L, table.first)
+            // the mark right before the table cannot go (the table would have no paragraph to follow): refused, nothing queued
+            assertFalse("Backspace at the start of the table is refused", onMain { s.deleteText(table.first - 1, table.first) })
+            assertFalse(s.needsReopen)
+            // the empty paragraphs above it go one by one, and typing still works
+            var at = table.first - 1
+            repeat(20) { ok(s, onMain { s.deleteText(at - 1, at) }); at-- }
+            ok(s, onMain { s.insertText(at, "x") })
+            ok(s, onMain { s.insertText(s.cellStart(0, 0, 0), "cell") })
+            val saved = onMain { s.save(OpenDocument.output("docx_livetable_backspace_saved.docx")) }
+            assertTrue(saved.toString(), saved is EditResult.Ok)
+        }
+    }
+
     @Test fun twoTablesAfterOneParagraph() {
         val (_, tables) = liveThenSaved(blank("two"), "two") { s, _ ->
             ok(s, onMain { s.insertTable(0, 1, 2) })

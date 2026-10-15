@@ -1,4 +1,10 @@
-package com.alf06.document.reader.ui.home.document.office.show
+/*
+ * Copyright (c) 2026 dongb2002. All rights reserved.
+ *
+ * Proprietary and confidential. Unauthorized copying, modification or distribution of this
+ * file, via any medium, is strictly prohibited without the written permission of dongb2002.
+ */
+package com.wxiwei.office.pg.show
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -16,7 +22,7 @@ import android.view.View
  * Pen, eraser and laser pointer over the slide during the show. Strokes are kept per slide in
  * slide coordinates (0..1), so they stay on their slide when the show comes back to it.
  */
-class InkView(context: Context) : View(context) {
+internal class InkView(context: Context) : View(context) {
     enum class Mode { NONE, PEN, ERASER, LASER }
 
     class Stroke(val color: Int, val width: Float, val points: MutableList<PointF> = ArrayList())

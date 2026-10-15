@@ -132,7 +132,7 @@ class BNView : AbstractView() {
         val charAttr = charAttr!!
         AttrManage.instance().fillCharAttr(charAttr, paraElem!!.getAttribute(), leafElem!!.getAttribute())
         // the number takes the paragraph's font, like Word ("1." in Arial, not a serif)
-        paint.typeface = FontTypefaceManage.instance().getFontTypeface(charAttr.fontIndex, charAttr.isBold, charAttr.isItalic)
+        FontTypefaceManage.instance().applyTo(paint, charAttr.fontIndex, charAttr.isBold, charAttr.isItalic)
         // 字号
         paint.textSize = charAttr.fontSizeF * (charAttr.fontScale / 100f) * MainConstant.POINT_TO_PIXEL
         // 颜色

@@ -2,10 +2,13 @@ package com.reader.pdfviewer.search
 
 import android.graphics.Bitmap
 import android.graphics.RectF
+import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -31,11 +34,7 @@ internal class PageOcr {
     }
 
     suspend fun recognize(bitmap: Bitmap): List<OcrLine> {
-        val text = suspendCancellableCoroutine { cont ->
-            recognizer().process(InputImage.fromBitmap(bitmap, 0))
-                .addOnSuccessListener { cont.resume(it) }
-                .addOnFailureListener { cont.resumeWithException(it) }
-        }
+        val text = process(InputImage.fromBitmap(bitmap, 0))
         val width = bitmap.width.toFloat()
         val height = bitmap.height.toFloat()
         val lines = ArrayList<OcrLine>()
@@ -65,8 +64,31 @@ internal class PageOcr {
         return lines
     }
 
+    /** Recognizes [image]; while Google Play services still downloads the model (first use), waits for it. */
+    private suspend fun process(image: InputImage): Text {
+        var waited = 0L
+        while (true) {
+            try {
+                return suspendCancellableCoroutine { cont ->
+                    recognizer().process(image)
+                        .addOnSuccessListener { cont.resume(it) }
+                        .addOnFailureListener { cont.resumeWithException(it) }
+                }
+            } catch (e: MlKitException) {
+                if (e.errorCode != MlKitException.UNAVAILABLE || waited >= MODEL_WAIT_MS) throw e
+                delay(MODEL_RETRY_MS)
+                waited += MODEL_RETRY_MS
+            }
+        }
+    }
+
     fun close() {
         recognizer?.close()
         recognizer = null
+    }
+
+    private companion object {
+        const val MODEL_RETRY_MS = 2_000L
+        const val MODEL_WAIT_MS = 90_000L
     }
 }

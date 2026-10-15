@@ -336,7 +336,8 @@ class SheetEditSession internal constructor(
         if (cell == null) return ""
         cell.formula?.let { return "=$it" }
         return when (cell.getCellType()) {
-            Cell.CELL_TYPE_NUMERIC -> cell.getNumberValue().let { if (it == Math.rint(it) && Math.abs(it) < 1e15) it.toLong().toString() else it.toString() }
+            // a styled empty cell is read as a number without a value
+            Cell.CELL_TYPE_NUMERIC -> cell.getNumberValue().let { if (it.isNaN()) "" else if (it == Math.rint(it) && Math.abs(it) < 1e15) it.toLong().toString() else it.toString() }
             Cell.CELL_TYPE_STRING -> engine.adapter.stringOf(cell)
             Cell.CELL_TYPE_BOOLEAN -> if (cell.getBooleanValue()) "TRUE" else "FALSE"
             Cell.CELL_TYPE_ERROR -> com.wxiwei.office.fc.hssf.formula.eval.ErrorEval.getText(cell.getErrorValue())
@@ -454,6 +455,127 @@ class SheetEditSession internal constructor(
 
     fun clearCell(sheetIndex: Int, row: Int, col: Int) = setCellInput(sheetIndex, row, col, "")
 
+    // ---- copy and paste ----------------------------------------------------------------------
+
+    /**
+     * Cells copied from [row], [col]: each cell's input ("=formula" or its value) and look, row by
+     * row, and [text] as other apps take it (shown values, tabs between cells, a line per row).
+     */
+    class CellBlock internal constructor(
+        val row: Int, val col: Int, val rows: Int, val cols: Int,
+        internal val inputs: List<String>, internal val formats: List<CellFormat?>, val text: String,
+    )
+
+    /** The cells of a rectangle (see [CellBlock]); null (see [lastError]) when it is too large or the sheet does not exist. */
+    fun copyRange(sheetIndex: Int, row1: Int, col1: Int, row2: Int, col2: Int): CellBlock? {
+        val r1 = minOf(row1, row2); val r2 = maxOf(row1, row2); val c1 = minOf(col1, col2); val c2 = maxOf(col1, col2)
+        if (book.getSheet(sheetIndex) == null) { fail(Reason.NOT_FOUND, "Sheet $sheetIndex not found"); return null }
+        if (r1 < 0 || c1 < 0 || (r2 - r1 + 1L) * (c2 - c1 + 1L) > MAX_PASTE_CELLS) { fail(Reason.INVALID_ARGUMENT, "Range out of bounds or too large"); return null }
+        val inputs = ArrayList<String>(); val formats = ArrayList<CellFormat?>()
+        val text = StringBuilder()
+        for (r in r1..r2) {
+            for (c in c1..c2) {
+                val cell = cell(Key(sheetIndex, r, c))
+                inputs += inputOf(cell)
+                formats += cell?.let { formatOf(it) }
+                if (c > c1) text.append('\t')
+                text.append(cell?.let { ModelUtil.instance().getFormatContents(book, it) }.orEmpty().replace('\n', ' ').replace('\t', ' '))
+            }
+            if (r < r2) text.append('\n')
+        }
+        lastError = null
+        return CellBlock(r1, c1, r2 - r1 + 1, c2 - c1 + 1, inputs, formats, text.toString())
+    }
+
+    /**
+     * Pastes [block] with its top-left cell at [row], [col]: values, formulas (relative references
+     * moved by the distance, like Excel) and the look of each cell; one undoable step.
+     */
+    fun pasteBlock(sheetIndex: Int, row: Int, col: Int, block: CellBlock): Boolean {
+        val dr = row - block.row; val dc = col - block.col
+        return pasteCells(sheetIndex, row, col, block.rows, block.cols, { i ->
+            val input = block.inputs[i]
+            if (input.startsWith("=") && (dr != 0 || dc != 0)) "=" + A1FormulaShifter.shift(input.substring(1), dr, dc) else input
+        }) { i -> block.formats[i] }
+    }
+
+    /** Pastes text from another app at [row], [col]: a cell per tab-separated value, a row per line; one undoable step. */
+    fun pasteText(sheetIndex: Int, row: Int, col: Int, text: String): Boolean {
+        val lines = text.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n').split('\n').map { it.split('\t') }
+        val cols = lines.maxOf { it.size }
+        return pasteCells(sheetIndex, row, col, lines.size, cols, { i -> lines[i / cols].getOrElse(i % cols) { "" } }) { null }
+    }
+
+    /** Empties every cell of a rectangle (values and formulas; the look stays); one undoable step. */
+    fun clearRange(sheetIndex: Int, row1: Int, col1: Int, row2: Int, col2: Int): Boolean {
+        val r1 = minOf(row1, row2); val c1 = minOf(col1, col2)
+        val rows = maxOf(row1, row2) - r1 + 1; val cols = maxOf(col1, col2) - c1 + 1
+        return pasteCells(sheetIndex, r1, c1, rows, cols, { "" }) { null }
+    }
+
+    /** Writes [rows] x [cols] cells from [row], [col]: the input of cell i (row by row) and its look, if any. */
+    private fun pasteCells(sheetIndex: Int, row: Int, col: Int, rows: Int, cols: Int, input: (Int) -> String, format: (Int) -> CellFormat?): Boolean {
+        val sheet = book.getSheet(sheetIndex) ?: return fail(Reason.NOT_FOUND, "Sheet $sheetIndex not found")
+        if (row < 0 || col < 0 || row + rows > 1048576 || col + cols > 16384 || rows.toLong() * cols > MAX_PASTE_CELLS)
+            return fail(Reason.INVALID_ARGUMENT, "Range out of bounds or too large")
+        // every formula is checked first: nothing is written when one does not parse
+        for (i in 0 until rows * cols) input(i).trim().takeIf { it.startsWith("=") && it.length > 1 }?.let {
+            try { engine.adapter.parse(it.substring(1), sheetIndex) } catch (e: Exception) { return fail(Reason.INVALID_ARGUMENT, "Formula error: ${e.message}") }
+        }
+        val steps = ArrayList<Step>()
+        for (i in 0 until rows * cols) {
+            val key = Key(sheetIndex, row + i / cols, col + i % cols)
+            val before = inputOf(cell(key))
+            val after = input(i)
+            if (before != after) {
+                if (!apply(key, after)) { replay(Step.Group(steps), false); return false }
+                steps += Step.Input(key, before, after)
+            }
+            val f = format(i) ?: continue
+            val c = cell(key) ?: create(sheet, key)
+            val step = Step.Format(key, c.getCellStyleIndex(), styleFor(c.getCellStyle(), f), f)
+            applyFormat(step, true)
+            steps += step
+        }
+        if (steps.isNotEmpty()) { undoStack.add(Step.Group(steps)); redoStack.clear() }
+        lastError = null
+        repaint()
+        return true
+    }
+
+    /** The look of [cell] as a format that gives another cell the same look. */
+    private fun formatOf(cell: Cell): CellFormat? {
+        val style = cell.getCellStyle() ?: return null
+        val font = book.getFont(style.getFontIndex().toInt())
+        fun hex(argb: Int) = "%06X".format(argb and 0xFFFFFF)
+        val fill = style.getFillPattern()?.takeIf { it.fillType == BackgroundAndFill.FILL_SOLID }?.let { hex(it.foregroundColor) }
+        val horizontal = when (style.getHorizontalAlign()) {
+            CellStyle.ALIGN_LEFT -> "left"; CellStyle.ALIGN_CENTER -> "center"; CellStyle.ALIGN_RIGHT -> "right"
+            CellStyle.ALIGN_FILL -> "fill"; CellStyle.ALIGN_JUSTIFY -> "justify"; CellStyle.ALIGN_CENTER_SELECTION -> "centerContinuous"
+            else -> "general"
+        }
+        val vertical = when (style.getVerticalAlign()) {
+            CellStyle.VERTICAL_TOP -> "top"; CellStyle.VERTICAL_CENTER -> "center"; CellStyle.VERTICAL_JUSTIFY -> "justify"; else -> "bottom"
+        }
+        // borders: all four sides, the bottom only, or none (thick when any side is thicker than thin)
+        val sides = listOf(style.getBorderLeft(), style.getBorderRight(), style.getBorderTop(), style.getBorderBottom())
+        val border = when {
+            sides.all { it != CellStyle.BORDER_NONE } -> if (sides.any { it != CellStyle.BORDER_THIN }) "thick" else "all"
+            sides.take(3).all { it == CellStyle.BORDER_NONE } && sides[3] != CellStyle.BORDER_NONE -> "bottom"
+            else -> "none"
+        }
+        val borderColor = if (border == "none") null else hex(book.getColor(style.getBorderBottomColorIdx().toInt(), true))
+        return CellFormat(
+            bold = font?.isBold() ?: false, italic = font?.isItalic() ?: false, underline = (font?.getUnderline() ?: 0) != 0,
+            strike = font?.isStrikeline() ?: false, fontSize = font?.getFontSize(),
+            fontColor = font?.let { hex(book.getColor(it.getColorIndex())) },
+            fillColor = fill ?: "none", horizontal = horizontal, vertical = vertical, wrap = style.isWrapText(),
+            numberFormat = style.getFormatCode()?.takeIf { it.isNotEmpty() && !it.equals("General", true) },
+            rotation = style.getRotation().toInt().takeIf { it != 0 }, indent = style.getIndent().toInt().takeIf { it != 0 },
+            border = border, borderColor = borderColor,
+        ).takeIf { it.validate() == null }
+    }
+
     // ---- pictures ---------------------------------------------------------------------------
 
     private class NewPicture(val sheet: Int, val shape: com.wxiwei.office.common.shape.PictureShape, val file: File)
@@ -482,7 +604,7 @@ class SheetEditSession internal constructor(
             setStart(com.wxiwei.office.ss.model.drawing.AnchorPoint().apply { setRow(row); setColumn(col.toShort()) })
             setWidth(widthPx); setHeight(heightPx)
         }
-        shape.bounds = com.wxiwei.office.ss.util.ModelUtil.instance().getCellAnchor(sheet, anchor)
+        shape.bounds = ModelUtil.instance().getCellAnchor(sheet, anchor)
         // its id in the drawing from now on: saved with it, it stays movable in the next session
         sheet.setPictureId(shape, sheet.maxDrawingId + 1)
         val added = NewPicture(sheetIndex, shape, image)
@@ -766,6 +888,8 @@ class SheetEditSession internal constructor(
         private const val FIRST_EDIT_INDEX = 20_000 // font and style indexes are Shorts
         private const val CUSTOM_FORMAT_ID = 200
         private const val MAX_FORMAT_CELLS = 100_000L
+        /** At most this many cells are copied or pasted at once. */
+        private const val MAX_PASTE_CELLS = 20_000L
         private const val EMU_PER_PX = (MainConstant.EMU_PER_INCH / MainConstant.PIXEL_DPI).toLong()
 
         private fun spreadsheetOf(control: IControl): Spreadsheet =

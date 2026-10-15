@@ -590,4 +590,28 @@ class SheetEditSessionTest {
             assertEquals(0xFF0000, onMain { book(reader).getColor(st.getBorderRightColorIdx().toInt()) and 0xFFFFFF })
         }
     }
+
+    /** Copy and paste of cells: formulas move, the look comes along, undo takes the paste back whole. */
+    @Test
+    fun copyPasteCells() {
+        val source = OpenDocument.copySample("sample.xlsx", "xlsx_copy_paste.xlsx")
+        OpenDocument.open(source) { reader ->
+            val session = onMain { SheetEditSession(reader.control!!, source) }
+            onMain {
+                assertTrue(session.setCellInput(0, 199, 26, "5"))
+                assertTrue(session.setCellInput(0, 200, 26, "=AA200*2"))
+                assertTrue(session.setCellFormat(0, 199, 26, com.wxiwei.office.editor.xlsx.CellFormat(bold = true)))
+            }
+            val block = onMain { session.copyRange(0, 199, 26, 200, 26) }!!
+            assertEquals("5\n10", block.text)
+            onMain { assertTrue(session.pasteBlock(0, 204, 28, block)) }
+            assertEquals("5", onMain { session.getInput(0, 204, 28) })
+            assertEquals("=AC205*2", onMain { session.getInput(0, 205, 28) })
+            onMain { assertTrue(session.undo()) }
+            assertEquals("after undo", "", onMain { session.getInput(0, 204, 28) })
+            assertEquals("after undo", "", onMain { session.getInput(0, 205, 28) })
+            onMain { assertTrue(session.redo()) }
+            assertEquals("=AC205*2", onMain { session.getInput(0, 205, 28) })
+        }
+    }
 }

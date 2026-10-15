@@ -214,6 +214,8 @@ class WordPictureOverlay(
         if (mode == 6) guideAt = (guideFrom + dx).coerceIn(guideMin, maxOf(guideMin, guideMax))
         else if (mode == 7) guideAt = maxOf(guideMin, guideFrom + dy)
         else if (mode == 1) {
+            lastX = x; lastY = y
+            if (!scrolling) { scrolling = true; postOnAnimation(edgeScroll) }
             drag.set(box.left + dx, box.top + dy, box.right + dx, box.bottom + dy)
             val at = IntArray(2); getLocationOnScreen(at)
             val caret = dropAt(x + at[0], y + at[1], dy)
@@ -236,6 +238,31 @@ class WordPictureOverlay(
             drag.set(left, top, left + w, top + h)
         }
         invalidate()
+    }
+
+    // A move held near the top or bottom edge of the document scrolls it, so the frame can be
+    // taken to another page: the place it was picked up from scrolls away with the document.
+    private var lastX = 0f
+    private var lastY = 0f
+    private var scrolling = false
+    private val edgeScroll = object : Runnable {
+        override fun run() {
+            val view = source()
+            val top = sourceShift().second
+            val zone = 48 * density
+            val into = maxOf(top + zone - lastY, lastY - (top + (view?.height ?: 0) - zone))
+            if (mode != 1 || view == null || into <= 0) { scrolling = false; return }
+            // faster the closer to the edge
+            val step = maxOf(1, (minOf(into / zone, 1f) * 16 * density).toInt()) * (if (lastY < top + zone) -1 else 1)
+            val before = view.scrollY
+            view.scrollBy(0, step)
+            val moved = view.scrollY - before
+            if (moved == 0) { scrolling = false; return }
+            downY -= moved
+            box.offset(0f, -moved.toFloat())
+            dragTo(lastX, lastY)
+            postOnAnimation(this)
+        }
     }
 
     private fun release(x: Float, y: Float, rawX: Float, rawY: Float) {

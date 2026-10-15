@@ -55,6 +55,7 @@
     <string name="docsdk_edit_column_width_failed">Không đổi được độ rộng cột</string>
     <string name="docsdk_edit_column_width_of">Độ rộng cột %1$s (ký tự)</string>
     <string name="docsdk_edit_copied">Đã chép</string>
+    <string name="docsdk_edit_shape_copied">Hình %1$d</string>
     <string name="docsdk_edit_copy">Chép</string>
     <string name="docsdk_edit_copy_file_name">%1$s (bản sao).%2$s</string>
     <string name="docsdk_edit_copy_saved">Đã lưu bản sao</string>
@@ -187,7 +188,6 @@
     <string name="docsdk_edit_push">Đẩy</string>
     <string name="docsdk_edit_range_hint">A1 hoặc A1:C10</string>
     <string name="docsdk_edit_recent_colors">Gần đây</string>
-    <string name="docsdk_edit_red_text">Chữ đỏ</string>
     <string name="docsdk_edit_reopen_failed">Không mở lại được tài liệu</string>
     <string name="docsdk_edit_reorder_failed">Không đổi được thứ tự</string>
     <string name="docsdk_edit_replace">Thay</string>
@@ -225,6 +225,7 @@
     <string name="docsdk_edit_select_all">Chọn hết</string>
     <string name="docsdk_edit_select_cell_first">Chọn một ô trước</string>
     <string name="docsdk_edit_select_paragraph">Chọn đoạn</string>
+    <string name="docsdk_edit_select_table">Chọn bảng</string>
     <string name="docsdk_edit_select_shape_first">Chọn shape trước</string>
     <string name="docsdk_edit_select_shape_first_hint">Chọn hình trước (chạm vào hình hoặc dùng Danh sách)</string>
     <string name="docsdk_edit_select_text_first">Chọn chữ trước</string>
@@ -253,6 +254,7 @@
     <string name="docsdk_edit_shown_after_save">Đã ghi nhận, sẽ hiện sau khi Lưu</string>
     <string name="docsdk_edit_slide_add_failed">Không thêm được slide</string>
     <string name="docsdk_edit_slide_delete_failed">Không xóa được slide</string>
+    <string name="docsdk_edit_slide_delete_last">Bài trình chiếu cần ít nhất một slide</string>
     <string name="docsdk_edit_slide_down">Chuyển slide xuống</string>
     <string name="docsdk_edit_slide_duplicate_failed">Không nhân bản được slide</string>
     <string name="docsdk_edit_slide_hint">Chạm vào shape trên slide để chọn</string>

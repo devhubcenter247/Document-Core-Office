@@ -19,6 +19,7 @@ import com.editor.docsdk.EditStyle
  *
  * [range] is the selection (end exclusive), [caret] the caret rectangle of an offset in the
  * coordinates of [source], [offsetAt] the offset at a screen point, [onChange] the new selection.
+ * What to do with the selection is on the panel's context bar.
  */
 @SuppressLint("ViewConstructor")
 class WordSelectionHandles(
@@ -114,6 +115,7 @@ class WordSelectionHandles(
                 val was = dragging != 0
                 dragging = 0
                 if (was && !moved && event.actionMasked == MotionEvent.ACTION_UP) onTap(event.rawX, event.rawY)
+                if (was) refresh()
                 return was
             }
         }

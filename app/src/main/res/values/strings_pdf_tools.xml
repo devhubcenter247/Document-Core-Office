@@ -90,6 +90,10 @@
     <string name="pdf_ocr">Recognize text (OCR)</string>
     <string name="pdf_ocr_done">Text recognized on %1$d pages</string>
     <string name="pdf_ocr_nothing">Every page already has text; the copy is unchanged</string>
+    <string name="pdf_ocr_scan_page">This page is a scanned image, so its text cannot be selected yet. Recognize the text of this page (OCR) into the file to select, highlight and copy it? Other scanned pages are recognized when you long press them.</string>
+    <string name="pdf_ocr_recognize">Recognize</string>
+    <string name="pdf_ocr_scan_done">Text recognized. Long press a word to select it.</string>
+    <string name="pdf_ocr_scan_none">No text was found on this page</string>
     <string name="pdf_compress">Compress</string>
     <string name="pdf_compress_low">Low: best quality</string>
     <string name="pdf_compress_medium">Medium: recommended</string>

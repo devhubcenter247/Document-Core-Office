@@ -133,6 +133,7 @@ class FontTypefaceManage {
     fun addEmbeddedFont(fontName: String, typeface: Typeface) {
         embeddedFonts[fontName] = typeface
         styled.clear()
+        faked.clear()
     }
 
     // the bold / italic / bold italic faces a document embeds for a family, by (name, Typeface style)
@@ -142,6 +143,7 @@ class FontTypefaceManage {
     fun addEmbeddedFace(fontName: String, style: Int, typeface: Typeface) {
         embeddedFaces[fontName to style] = typeface
         styled.clear()
+        faked.clear()
     }
 
     /** Marks an embedded family whose regular face is already heavy (OS/2 weight >= 600). */
@@ -164,12 +166,13 @@ class FontTypefaceManage {
     /**
      * Typeface of [index] in the requested style. Android picks the family's real bold/italic face
      * and only synthesizes one when the family has none, so callers must not fake bold/italic.
-     * A family that already is bold is not emboldened again.
+     * A family that already is bold is not emboldened again. Some devices cannot derive a style
+     * from their system font (it stays upright): [fakeStyle] says what to fake on the paint then.
      */
     fun getFontTypeface(index: Int, bold: Boolean, italic: Boolean): Typeface {
         val base = getFontTypeface(index)
         val name = if (index < 0) null else sysFontName?.getOrNull(index)
-        val style = (if ((bold || missingHeavyFace(name)) && !isBoldFace(name)) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0)
+        val style = styleOf(name, bold, italic)
         if (style == Typeface.NORMAL) return base
         val key = (index.toLong() shl 8) or style.toLong()
         styled[key]?.let { return it }
@@ -178,17 +181,45 @@ class FontTypefaceManage {
         val wantBold = style and Typeface.BOLD != 0
         val wantItalic = style and Typeface.ITALIC != 0
         val bundled = if (name == null || embeddedFonts.containsKey(name)) null else BUNDLED[name.trim().lowercase()]
-        val typeface = if (bundled != null) {
-            // the exact bundled face; a missing one (Cousine italic) is synthesized from the nearest
-            val exact = if (bundled.file(wantBold, wantItalic) != null) bundledTypeface(name!!, wantBold, wantItalic) else null
-            exact ?: Typeface.create(bundledTypeface(name!!, wantBold, false) ?: base, if (wantItalic) Typeface.ITALIC else 0)
+        val exact = if (bundled != null && bundled.file(wantBold, wantItalic) != null) bundledTypeface(name!!, wantBold, wantItalic) else null
+        val typeface = if (exact != null) {
+            exact
+        } else if (bundled != null) {
+            // a missing bundled face (Cousine italic) is synthesized from the nearest
+            Typeface.create(bundledTypeface(name!!, wantBold, false) ?: base, if (wantItalic) Typeface.ITALIC else 0)
         } else if (android.os.Build.VERSION.SDK_INT >= 28) {
             // by weight: Typeface.create(base, BOLD) of a family the device lacks stays regular
             Typeface.create(base, if (wantBold) 700 else base.weight, wantItalic)
         } else {
             Typeface.create(base, style)
         }
+        if (exact == null) {
+            val fake = (if (wantBold && !typeface.isBold) Typeface.BOLD else 0) or (if (wantItalic && !typeface.isItalic) Typeface.ITALIC else 0)
+            if (fake != 0) faked[key] = fake
+        }
         return typeface.also { styled[key] = it }
+    }
+
+    private fun styleOf(name: String?, bold: Boolean, italic: Boolean): Int =
+        (if ((bold || missingHeavyFace(name)) && !isBoldFace(name)) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0)
+
+    // styles the typeface of a key could not get (Typeface.BOLD / ITALIC bits)
+    private val faked = java.util.concurrent.ConcurrentHashMap<Long, Int>()
+
+    /** What [getFontTypeface] of the same arguments could not draw: Typeface.BOLD / ITALIC bits to fake on the paint. */
+    fun fakeStyle(index: Int, bold: Boolean, italic: Boolean): Int {
+        val style = styleOf(if (index < 0) null else sysFontName?.getOrNull(index), bold, italic)
+        if (style == Typeface.NORMAL) return 0
+        getFontTypeface(index, bold, italic)
+        return faked[(index.toLong() shl 8) or style.toLong()] ?: 0
+    }
+
+    /** Sets [paint]'s typeface for [index] in the style asked, faking on the paint what the font cannot draw. */
+    fun applyTo(paint: android.graphics.Paint, index: Int, bold: Boolean, italic: Boolean) {
+        paint.typeface = getFontTypeface(index, bold, italic)
+        val fake = fakeStyle(index, bold, italic)
+        paint.isFakeBoldText = fake and Typeface.BOLD != 0
+        paint.textSkewX = if (fake and Typeface.ITALIC != 0) FAKE_ITALIC_SKEW else 0f
     }
 
     fun hasEmbeddedFont(fontName: String): Boolean = embeddedFonts.containsKey(fontName)
@@ -214,6 +245,9 @@ class FontTypefaceManage {
     }
 
     companion object {
+        /** The slant of a faked italic, as Android's own. */
+        const val FAKE_ITALIC_SKEW = -0.25f
+
         // Metric-compatible open fonts (same advance widths as the Office font, so lines break
         // where Word/Excel break them); Consolas and Cambria have no such twin, a close one is used.
         private val ARIMO = Bundled("Arimo-VF.ttf", "Arimo-VF.ttf", "Arimo-Italic-VF.ttf", "Arimo-Italic-VF.ttf", variable = true)

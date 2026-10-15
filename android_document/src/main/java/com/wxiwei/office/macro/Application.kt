@@ -9,6 +9,8 @@
  * 文件名称:          Application.java
  * 编译器:            android2.2
  */
+@file:Suppress("SENSELESS_COMPARISON")
+
 package com.wxiwei.office.macro
 
 import android.app.Activity

@@ -125,7 +125,7 @@ class LivePptxSession internal constructor(private val editor: PptxEditor, priva
         return true
     }
 
-    /** Bold, italic, underline, size, color or alignment for all the text of a shape. */
+    /** Bold, italic, underline, size, color, font or alignment for all the text of a shape. */
     fun setTextFormat(slideIndex: Int, shapeId: Int, format: TextFormat): Boolean =
         formatText(slideIndex, shapeId, format, { editor.setTextFormat(slideIndex, shapeId, format) }) { display.setTextFormat(slideIndex, shapeId, format) }
 
@@ -166,12 +166,24 @@ class LivePptxSession internal constructor(private val editor: PptxEditor, priva
     fun slideCount(): Int = editor.slideCount()
     /** Size, color and typeface of the shape's text as shown, for an editor over it. */
     fun textStyle(slideIndex: Int, shapeId: Int): TextStyle? = display.textStyle(slideIndex, shapeId)
+    /** How each run of the shape's text is drawn, by char range, for an editor over it. */
+    fun textRuns(slideIndex: Int, shapeId: Int): List<Pair<IntRange, TextStyle>> = display.textRuns(slideIndex, shapeId)
     /** Current bold/italic/underline of the shape's text (from its first run). */
     fun textFormatOf(slideIndex: Int, shapeId: Int): TextFormat? = editor.textFormatOf(slideIndex, shapeId)
+    /** Bold/italic/underline and font of the text at char [offset] of the shape's text. */
+    fun textFormatAt(slideIndex: Int, shapeId: Int, offset: Int): TextFormat? = editor.textFormatAt(slideIndex, shapeId, offset)
 
     fun deleteSlide(slideIndex: Int): Boolean = slideChange { editor.deleteSlide(slideIndex) }
     fun duplicateSlide(slideIndex: Int): Boolean = slideChange { editor.duplicateSlide(slideIndex) >= 0 }
     fun moveSlide(from: Int, to: Int): Boolean = slideChange { editor.moveSlide(from, to) }
+    /** A copy of the shape for [pasteShape]; null (see [lastError]) when it cannot be copied. */
+    fun copyShape(slideIndex: Int, shapeId: Int): PptxEditor.ShapeClip? = editor.copyShape(slideIndex, shapeId)
+    /** The id of the shape the last [pasteShape] made. */
+    var pastedShape = -1
+        private set
+    /** Puts a copy of [clip] on the slide, moved by [dx], [dy] EMU; shown after a reopen like slide changes. */
+    fun pasteShape(slideIndex: Int, clip: PptxEditor.ShapeClip, dx: Long, dy: Long): Boolean =
+        slideChange { editor.pasteShape(slideIndex, clip, dx, dy).also { pastedShape = it } >= 0 }
     /** An empty slide after [afterIndex]; shown after saving and reopening like other slide changes. */
     fun addBlankSlide(afterIndex: Int): Boolean = slideChange { editor.addBlankSlide(afterIndex) >= 0 }
 
@@ -258,4 +270,6 @@ class LivePptxSession internal constructor(private val editor: PptxEditor, priva
 
     /** Write the file. The live view already matches it, so no reopen is needed (see [needsReopen]). */
     fun save(target: File): EditResult = editor.save(target).also { if (it is EditResult.Ok) changes = 0 }
+    /** Writes the file like [save], but the edits still count as not saved (an undo point, not a save). */
+    fun copyTo(target: File): EditResult = editor.save(target)
 }

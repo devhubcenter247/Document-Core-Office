@@ -101,6 +101,11 @@ class OfficeDocumentView @JvmOverloads constructor(
         reader?.invalidateThumbnail(pageNumber)
     }
 
+    /** Redraws every thumbnail after pages were added, removed or reordered. */
+    suspend fun invalidateThumbnails() {
+        reader?.invalidateThumbnails()
+    }
+
     /** Action hook; return true to consume the action. May be called off the main thread. */
     var onAction: ((actionID: Int, obj: Any?) -> Boolean)? = null
         set(value) {

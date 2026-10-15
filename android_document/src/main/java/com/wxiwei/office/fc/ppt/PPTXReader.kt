@@ -11,6 +11,8 @@
  * 编译器:            android2.2
  * 时间:              下午2:35:29
  */
+@file:Suppress("UNNECESSARY_NOT_NULL_ASSERTION", "UNCHECKED_CAST")
+
 package com.wxiwei.office.fc.ppt
 
 import com.wxiwei.office.fc.ppt.reader.pptXmlBoolean

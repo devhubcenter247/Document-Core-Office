@@ -275,15 +275,18 @@ class PdfTools(context: Context) {
     /**
      * A copy of [source] whose scanned pages (pages without a text layer) get their text, found
      * by OCR, as invisible words over the picture: the text can then be found, selected and
-     * copied in any PDF reader. Returns the number of pages recognized.
+     * copied in any PDF reader. Only [only] (page indexes) are looked at when given: OCR of a long
+     * document takes long. Returns the number of pages recognized.
      */
-    suspend fun addTextLayer(source: PdfSource, output: File, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Int =
+    suspend fun addTextLayer(source: PdfSource, output: File, onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+                             only: Collection<Int>? = null): Int =
         withContext(dispatcher) {
             val doc = open(source)
             try {
                 val count = pdfium.getPageCount(doc)
+                val indexes = only?.filter { it in 0 until count }?.distinct()?.sorted() ?: (0 until count).toList()
                 val pages = ArrayList<PageWords>()
-                for (index in 0 until count) {
+                for ((done, index) in indexes.withIndex()) {
                     currentCoroutineContext().ensureActive()
                     val layer = pdfium.getPageTextLayout(doc, index)
                     if (layer != null && DocumentTextIndex.needsOcr(layer.text)) {
@@ -293,7 +296,7 @@ class PdfTools(context: Context) {
                             pages += PageWords(index, lines, null)
                         }
                     }
-                    onProgress(index + 1, count)
+                    onProgress(done + 1, indexes.size)
                 }
                 val recognized = addWords(doc, pages)
                 save(doc, output)
@@ -316,6 +319,8 @@ class PdfTools(context: Context) {
         if (pages.isEmpty()) return 0
         val text = StringBuilder()
         for (page in pages) for (line in page.lines) for (word in line.words) if (page.kept(word)) text.append(line.text, word.start, word.end)
+        // the spaces between the words
+        text.append(' ')
         val font = unicodeFont(text.toString())
         return pages.count { addWords(doc, it, font) }
     }
@@ -332,13 +337,17 @@ class PdfTools(context: Context) {
         val gh = size.height * 100
         pdfium.openPage(doc, index)
         try {
-            for (line in lines) for (word in line.words) {
+            for (line in lines) {
+                val kept = line.words.filter { page.kept(it) }
+                for ((i, word) in kept.withIndex()) {
                 val box = word.box
-                if (!page.kept(word)) continue
                 val a = pdfium.deviceToPageCoords(doc, index, 0, 0, gw, gh, 0, (box.left * gw).toInt(), (box.top * gh).toInt()) ?: continue
                 val b = pdfium.deviceToPageCoords(doc, index, 0, 0, gw, gh, 0, (box.right * gw).toInt(), (box.bottom * gh).toInt()) ?: continue
-                words += line.text.substring(word.start, word.end)
+                // a space after each word but the last of its line: readers take the words apart
+                // (search, copy, read aloud); the word itself still fills its box
+                words += line.text.substring(word.start, word.end) + if (i < kept.lastIndex) " " else ""
                 boxes += minOf(a.x, b.x); boxes += minOf(a.y, b.y); boxes += maxOf(a.x, b.x); boxes += maxOf(a.y, b.y)
+                }
             }
         } finally {
             pdfium.closePage(doc, index)

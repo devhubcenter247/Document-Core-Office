@@ -97,6 +97,7 @@ internal class AnnotateMode(private val overlay: PdfOverlayView, private val hos
 
     override fun onDown(x: Float, y: Float): Boolean {
         start.set(x, y); now.set(x, y)
+        rubbed = false
         return when (tool) {
             Tool.PEN -> false
             Tool.SELECT -> {
@@ -129,7 +130,36 @@ internal class AnnotateMode(private val overlay: PdfOverlayView, private val hos
         when (drag) {
             Drag.SHAPE -> pdf.pageViewRect(dragPage)?.let { now.set(x.coerceIn(it.left, it.right), y.coerceIn(it.top, it.bottom)) }
             Drag.MOVE, Drag.RESIZE -> now.set(x, y)
-            Drag.NONE -> {}
+            Drag.NONE -> if (tool == Tool.ERASER) {
+                rub(now.x, now.y, x, y)
+                now.set(x, y)
+            }
+        }
+    }
+
+    // whether the eraser took something off since the finger went down: all of it is one undo step
+    private var rubbed = false
+
+    /** The eraser rubs out the pen strokes along the way of the finger, however fast it moves. */
+    private fun rub(fromX: Float, fromY: Float, toX: Float, toY: Float) {
+        val radius = overlay.dp(ERASER_RADIUS)
+        val steps = max(1, (Math.hypot((toX - fromX).toDouble(), (toY - fromY).toDouble()) / radius).toInt())
+        var erased = false
+        for (i in 0..steps) {
+            if (pdf.eraseInkAt(fromX + (toX - fromX) * i / steps, fromY + (toY - fromY) * i / steps, radius, rubbed)) {
+                erased = true
+                rubbed = true
+            }
+        }
+        if (erased) host.changed()
+    }
+
+    /** A tap of the eraser: the pen stroke under it is cut there, any other annotation is taken off. */
+    private fun eraseAt(x: Float, y: Float) {
+        if (pdf.eraseInkAt(x, y, overlay.dp(ERASER_RADIUS))) return host.changed()
+        // a pen stroke is only hit on its line, not anywhere in its bounds
+        pdf.findAnnotationAt(x, y)?.takeIf { it.name?.startsWith("pdfview-ink-") != true }?.let {
+            pdf.removeAnnotation(it) { removed -> if (removed) host.changed() }
         }
     }
 
@@ -146,9 +176,7 @@ internal class AnnotateMode(private val overlay: PdfOverlayView, private val hos
                     else host.annotationTapped(hit, false)
                 }
             }
-            Tool.ERASER -> if (tap) pdf.findAnnotationAt(x, y)?.let {
-                pdf.removeAnnotation(it) { removed -> if (removed) host.changed() }
-            }
+            Tool.ERASER -> if (tap) eraseAt(x, y)
             Tool.TEXT -> if (tap) pointAt(x, y)?.let { (page, p) ->
                 host.askText { text, size ->
                     pdf.addText(page, p.x, p.y, text, size, host.color)?.let { name -> placed(name, page) }
@@ -273,6 +301,8 @@ internal class AnnotateMode(private val overlay: PdfOverlayView, private val hos
     }
 
     companion object {
+        private const val ERASER_RADIUS = 10f
+
         /** [r] with top > bottom and left < right (a line keeps its direction otherwise). */
         fun normalized(r: RectF) = RectF(min(r.left, r.right), max(r.top, r.bottom), max(r.left, r.right), min(r.top, r.bottom))
 
