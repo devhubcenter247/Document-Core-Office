@@ -59,6 +59,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -2172,6 +2173,10 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
 
     private fun union(a: RectF?, b: RectF?): RectF? = if (a == null || b == null) null else RectF(a).apply { union(b) }
 
+    /** Whether two frames in points are the same, within float error. */
+    private fun sameFrame(a: RectF, b: RectF): Boolean =
+        abs(a.left - b.left) < 0.01f && abs(a.top - b.top) < 0.01f && abs(a.right - b.right) < 0.01f && abs(a.bottom - b.bottom) < 0.01f
+
     /** Map a view point to a viewer page and PDF coordinates, or null in page gaps. Main thread only. */
     fun viewToPagePoint(viewX: Float, viewY: Float): Pair<Int, PointF>? {
         requireEditThread()
@@ -2248,9 +2253,21 @@ class PDFView(context: Context, set: AttributeSet?) : RelativeLayout(context, se
         // frame is then where the text really is (a frame made wider or narrower does not stretch it)
         val origin = RectF(first)
         var landed: RectF? = null
+        // The size that put the text in each frame it has had: undo and redo, which ask for one of
+        // those frames again, get that size back exactly.
+        val sizes = mutableListOf(RectF(first) to sizePt)
+        var current = sizes[0]
         val place = { r: RectF ->
-            val size = sizePt * (r.top - r.bottom) / (origin.top - origin.bottom)
+            val known = sizes.firstOrNull { (frame, _) -> sameFrame(frame, r) }?.second
+            // Otherwise the height of the bounds against the frame the text has now: a move keeps the
+            // size, a resize scales it. Not against the first frame: the frame pdfium returns is not
+            // proportional to the size, so the text drifted (it shrank on every move after a resize).
+            val size = known ?: (current.second * (r.top - r.bottom) / (current.first.top - current.first.bottom))
             landed = file.addFreeText(page, text, font, size, pageX + (r.left - origin.left), pageY + (r.top - origin.top), color, name)
+            landed?.let { frame ->
+                current = RectF(frame) to size
+                if (known == null) sizes += current
+            }
             landed != null
         }
         return registerPlaced(page, name, origin, AREA_PAD, place, landedAt = { landed })

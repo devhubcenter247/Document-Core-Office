@@ -5,7 +5,7 @@ plugins {
 
 // Coordinates of the SDK as integrators add it: implementation("com.editor:docsdk:<version>")
 group = "com.editor"
-version = "1.1.8"
+version = "1.0.0"
 
 android {
     namespace = "com.wxiwei.office"
